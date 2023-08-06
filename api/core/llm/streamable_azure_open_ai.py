@@ -37,13 +37,14 @@ class StreamableAzureOpenAI(AzureOpenAI):
         return values
 
     @property
-    def _invocation_params(self) -> Dict[str, Any]:
+    def _invocation_params(self, context) -> Dict[str, Any]:
         return {**super()._invocation_params, **{
             "api_type": self.openai_api_type,
             "api_base": self.openai_api_base,
             "api_version": self.openai_api_version,
             "api_key": self.openai_api_key,
             "organization": self.openai_organization if self.openai_organization else None,
+            "context": context,
         }}
 
     @property
@@ -60,11 +61,12 @@ class StreamableAzureOpenAI(AzureOpenAI):
     def generate(
             self,
             prompts: List[str],
+            context: Dict[str, Any],
             stop: Optional[List[str]] = None,
             callbacks: Callbacks = None,
             **kwargs: Any,
     ) -> LLMResult:
-        return super().generate(prompts, stop, callbacks, **kwargs)
+        return super().generate(prompts, context, stop, callbacks, **kwargs)
 
     @classmethod
     def get_kwargs_from_model_params(cls, params: dict):
@@ -73,6 +75,7 @@ class StreamableAzureOpenAI(AzureOpenAI):
     def _generate(
         self,
         prompts: List[str],
+        context: Dict[str, Any],
         stop: Optional[List[str]] = None,
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
