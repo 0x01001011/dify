@@ -42,9 +42,10 @@ const Config: FC = () => {
 
   const promptTemplate = modelConfig.configs.prompt_template
   const promptVariables = modelConfig.configs.prompt_variables
-  const [apiUrl, setApiUrl] = useState('')
-  const [customPrompt, setCustomPrompt] = useState('')
   const handlePromptChange = (newTemplate: string, newVariables: PromptVariable[], apiUrl: string, customPrompt: string) => {
+    if (typeof apiUrl !== 'string' || typeof customPrompt !== 'string') {
+      throw new Error('apiUrl and customPrompt must be strings');
+    }
     const newModelConfig = produce(modelConfig, (draft) => {
       draft.configs.prompt_template = newTemplate
       draft.configs.prompt_variables = [...draft.configs.prompt_variables, ...newVariables]
@@ -60,6 +61,9 @@ const Config: FC = () => {
   }
 
   const handlePromptVariablesNameChange = (newVariables: PromptVariable[], apiUrl: string, customPrompt: string) => {
+    if (typeof apiUrl !== 'string' || typeof customPrompt !== 'string') {
+      throw new Error('apiUrl and customPrompt must be strings');
+    }
     setPrevPromptConfig(modelConfig.configs)
     const newModelConfig = produce(modelConfig, (draft) => {
       draft.configs.prompt_variables = newVariables
