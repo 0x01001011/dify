@@ -66,6 +66,8 @@ class StreamableAzureOpenAI(AzureOpenAI):
             callbacks: Callbacks = None,
             **kwargs: Any,
     ) -> LLMResult:
+        if not isinstance(context, dict):
+            raise TypeError("context must be a dictionary")
         return super().generate(prompts, context, stop, callbacks, **kwargs)
 
     @classmethod
@@ -75,6 +77,7 @@ class StreamableAzureOpenAI(AzureOpenAI):
     def _generate(
         self,
         prompts: List[str],
+        context: Dict[str, Any],
         stop: Optional[List[str]] = None,
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
