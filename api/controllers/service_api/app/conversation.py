@@ -48,6 +48,7 @@ class ConversationApi(AppApiResource):
         if end_user is None and args['user'] is not None:
             end_user = create_or_update_end_user_for_user_id(app_model, args['user'])
 
+        api_url = 'http://example.com/api' # replace with actual API URL
         try:
             context = self.external_api_call(api_url)
             return ConversationService.pagination_by_last_id(app_model, end_user, args['last_id'], args['limit'], context)
@@ -67,6 +68,7 @@ class ConversationDetailApi(AppApiResource):
         if end_user is None and user is not None:
             end_user = create_or_update_end_user_for_user_id(app_model, user)
 
+        api_url = 'http://example.com/api' # replace with actual API URL
         try:
             context = self.external_api_call(api_url)
             ConversationService.delete(app_model, conversation_id, end_user, context)
@@ -91,6 +93,7 @@ class ConversationRenameApi(AppApiResource):
         if end_user is None and args['user'] is not None:
             end_user = create_or_update_end_user_for_user_id(app_model, args['user'])
 
+        api_url = 'http://example.com/api' # replace with actual API URL
         try:
             context = self.external_api_call(api_url)
             return ConversationService.rename(app_model, conversation_id, end_user, args['name'], context)
