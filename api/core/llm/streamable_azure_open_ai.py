@@ -75,7 +75,6 @@ class StreamableAzureOpenAI(AzureOpenAI):
     def _generate(
         self,
         prompts: List[str],
-        context: Dict[str, Any],
         stop: Optional[List[str]] = None,
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
