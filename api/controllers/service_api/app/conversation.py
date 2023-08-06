@@ -33,13 +33,14 @@ class ConversationApi(AppApiResource):
     def external_api_call(self, api_url):
         try:
             response = requests.get(api_url)
+            response.raise_for_status()
             return response.json()
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             print(f"Error occurred while making API call: {e}")
             return None
 
     @marshal_with(conversation_infinite_scroll_pagination_fields)
-    def get(self, app_model, end_user):
+    def get(self, app_model, end_user, api_url):
         if app_model.mode != 'chat':
             raise NotChatAppError()
 
@@ -63,7 +64,7 @@ class ConversationApi(AppApiResource):
 
 class ConversationDetailApi(AppApiResource):
     @marshal_with(conversation_fields)
-    def delete(self, app_model, end_user, c_id):
+    def delete(self, app_model, end_user, c_id, api_url):
         if app_model.mode != 'chat':
             raise NotChatAppError()
 
@@ -87,7 +88,7 @@ class ConversationDetailApi(AppApiResource):
 class ConversationRenameApi(AppApiResource):
 
     @marshal_with(conversation_fields)
-    def post(self, app_model, end_user, c_id):
+    def post(self, app_model, end_user, c_id, api_url):
         if app_model.mode != 'chat':
             raise NotChatAppError()
 
