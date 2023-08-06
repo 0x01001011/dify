@@ -42,7 +42,7 @@ const Config: FC = () => {
 
   const promptTemplate = modelConfig.configs.prompt_template
   const promptVariables = modelConfig.configs.prompt_variables
-  const handlePromptChange = (newTemplate: string, newVariables: PromptVariable[], apiUrl: string, customPrompt: string) => {
+  const handlePromptChange = (newTemplate: string, newVariables: PromptVariable[], apiUrl: string = '', customPrompt: string = '') => {
     if (typeof apiUrl !== 'string' || typeof customPrompt !== 'string') {
       throw new Error('apiUrl and customPrompt must be strings');
     }
@@ -60,7 +60,7 @@ const Config: FC = () => {
     setModelConfig(newModelConfig)
   }
 
-  const handlePromptVariablesNameChange = (newVariables: PromptVariable[], apiUrl: string, customPrompt: string) => {
+  const handlePromptVariablesNameChange = (newVariables: PromptVariable[], apiUrl: string = '', customPrompt: string = '') => {
     if (typeof apiUrl !== 'string' || typeof customPrompt !== 'string') {
       throw new Error('apiUrl and customPrompt must be strings');
     }
