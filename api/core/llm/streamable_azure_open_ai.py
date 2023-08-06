@@ -37,7 +37,9 @@ class StreamableAzureOpenAI(AzureOpenAI):
         return values
 
     @property
-    def _invocation_params(self, context) -> Dict[str, Any]:
+    def _invocation_params(self, context=None) -> Dict[str, Any]:
+        if context is None:
+            raise ValueError("context must be provided")
         return {**super()._invocation_params, **{
             "api_type": self.openai_api_type,
             "api_base": self.openai_api_base,
@@ -61,12 +63,12 @@ class StreamableAzureOpenAI(AzureOpenAI):
     def generate(
             self,
             prompts: List[str],
-            context: Dict[str, Any],
+            context: Dict[str, Any] = None,
             stop: Optional[List[str]] = None,
             callbacks: Callbacks = None,
             **kwargs: Any,
     ) -> LLMResult:
-        if not isinstance(context, dict):
+        if context is None or not isinstance(context, dict):
             raise TypeError("context must be a dictionary")
         return super().generate(prompts, context, stop, callbacks, **kwargs)
 
@@ -77,7 +79,6 @@ class StreamableAzureOpenAI(AzureOpenAI):
     def _generate(
         self,
         prompts: List[str],
-        context: Dict[str, Any],
         stop: Optional[List[str]] = None,
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
