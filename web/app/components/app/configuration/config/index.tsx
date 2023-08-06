@@ -142,12 +142,16 @@ const Config: FC = () => {
           mode={mode as AppType}
           promptTemplate={promptTemplate}
           promptVariables={promptVariables}
+          apiUrl={apiUrl}
+          customPrompt={customPrompt}
           onChange={handlePromptChange}
         />
 
         {/* Variables */}
         <ConfigVar
           promptVariables={promptVariables}
+          apiUrl={apiUrl}
+          customPrompt={customPrompt}
           onPromptVariablesChange={handlePromptVariablesNameChange}
         />
 
