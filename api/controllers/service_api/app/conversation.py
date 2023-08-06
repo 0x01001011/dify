@@ -31,8 +31,12 @@ conversation_infinite_scroll_pagination_fields = {
 class ConversationApi(AppApiResource):
 
     def external_api_call(self, api_url):
-        response = requests.get(api_url)
-        return response.json()
+        try:
+            response = requests.get(api_url)
+            return response.json()
+        except Exception as e:
+            print(f"Error occurred while making API call: {e}")
+            return None
 
     @marshal_with(conversation_infinite_scroll_pagination_fields)
     def get(self, app_model, end_user):
@@ -49,8 +53,10 @@ class ConversationApi(AppApiResource):
             end_user = create_or_update_end_user_for_user_id(app_model, args['user'])
 
         api_url = 'http://example.com/api' # replace with actual API URL
+        context = self.external_api_call(api_url)
+        if context is None:
+            raise Exception("Failed to get data from external API")
         try:
-            context = self.external_api_call(api_url)
             return ConversationService.pagination_by_last_id(app_model, end_user, args['last_id'], args['limit'], context)
         except services.errors.conversation.LastConversationNotExistsError:
             raise NotFound("Last Conversation Not Exists.")
@@ -69,8 +75,10 @@ class ConversationDetailApi(AppApiResource):
             end_user = create_or_update_end_user_for_user_id(app_model, user)
 
         api_url = 'http://example.com/api' # replace with actual API URL
+        context = self.external_api_call(api_url)
+        if context is None:
+            raise Exception("Failed to get data from external API")
         try:
-            context = self.external_api_call(api_url)
             ConversationService.delete(app_model, conversation_id, end_user, context)
             return {"result": "success"}
         except services.errors.conversation.ConversationNotExistsError:
@@ -94,8 +102,10 @@ class ConversationRenameApi(AppApiResource):
             end_user = create_or_update_end_user_for_user_id(app_model, args['user'])
 
         api_url = 'http://example.com/api' # replace with actual API URL
+        context = self.external_api_call(api_url)
+        if context is None:
+            raise Exception("Failed to get data from external API")
         try:
-            context = self.external_api_call(api_url)
             return ConversationService.rename(app_model, conversation_id, end_user, args['name'], context)
         except services.errors.conversation.ConversationNotExistsError:
             raise NotFound("Conversation Not Exists.")
