@@ -30,6 +30,10 @@ conversation_infinite_scroll_pagination_fields = {
 
 class ConversationApi(AppApiResource):
 
+    def external_api_call(self, api_url):
+        response = requests.get(api_url)
+        return response.json()
+
     @marshal_with(conversation_infinite_scroll_pagination_fields)
     def get(self, app_model, end_user):
         if app_model.mode != 'chat':
@@ -45,7 +49,8 @@ class ConversationApi(AppApiResource):
             end_user = create_or_update_end_user_for_user_id(app_model, args['user'])
 
         try:
-            return ConversationService.pagination_by_last_id(app_model, end_user, args['last_id'], args['limit'])
+            context = self.external_api_call(api_url)
+            return ConversationService.pagination_by_last_id(app_model, end_user, args['last_id'], args['limit'], context)
         except services.errors.conversation.LastConversationNotExistsError:
             raise NotFound("Last Conversation Not Exists.")
 
@@ -63,7 +68,8 @@ class ConversationDetailApi(AppApiResource):
             end_user = create_or_update_end_user_for_user_id(app_model, user)
 
         try:
-            ConversationService.delete(app_model, conversation_id, end_user)
+            context = self.external_api_call(api_url)
+            ConversationService.delete(app_model, conversation_id, end_user, context)
             return {"result": "success"}
         except services.errors.conversation.ConversationNotExistsError:
             raise NotFound("Conversation Not Exists.")
@@ -86,7 +92,8 @@ class ConversationRenameApi(AppApiResource):
             end_user = create_or_update_end_user_for_user_id(app_model, args['user'])
 
         try:
-            return ConversationService.rename(app_model, conversation_id, end_user, args['name'])
+            context = self.external_api_call(api_url)
+            return ConversationService.rename(app_model, conversation_id, end_user, args['name'], context)
         except services.errors.conversation.ConversationNotExistsError:
             raise NotFound("Conversation Not Exists.")
 
