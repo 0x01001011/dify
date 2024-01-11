@@ -6,18 +6,16 @@ import WorkspaceSelector from './workspace-selector'
 import SearchInput from './search-input'
 import PageSelector from './page-selector'
 import { preImportNotionPages } from '@/service/datasets'
-import AccountSetting from '@/app/components/header/account-setting'
 import { NotionConnector } from '@/app/components/datasets/create/step-one'
-import type { DataSourceNotionPage, DataSourceNotionPageMap, DataSourceNotionWorkspace } from '@/models/common'
-
-export type NotionPageSelectorValue = DataSourceNotionPage & { workspace_id: string }
+import type { DataSourceNotionPageMap, DataSourceNotionWorkspace, NotionPage } from '@/models/common'
+import { useModalContext } from '@/context/modal-context'
 
 type NotionPageSelectorProps = {
   value?: string[]
-  onSelect: (selectedPages: NotionPageSelectorValue[]) => void
+  onSelect: (selectedPages: NotionPage[]) => void
   canPreview?: boolean
   previewPageId?: string
-  onPreview?: (selectedPage: NotionPageSelectorValue) => void
+  onPreview?: (selectedPage: NotionPage) => void
   datasetId?: string
 }
 
@@ -32,8 +30,8 @@ const NotionPageSelector = ({
   const { data, mutate } = useSWR({ url: '/notion/pre-import/pages', datasetId }, preImportNotionPages)
   const [prevData, setPrevData] = useState(data)
   const [searchValue, setSearchValue] = useState('')
-  const [showDataSourceSetting, setShowDataSourceSetting] = useState(false)
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState('')
+  const { setShowAccountSettingModal } = useModalContext()
 
   const notionWorkspaces = useMemo(() => {
     return data?.notion_info || []
@@ -71,9 +69,10 @@ const NotionPageSelector = ({
   const handleSelectWorkspace = useCallback((workspaceId: string) => {
     setCurrentWorkspaceId(workspaceId)
   }, [])
-  const handleSelecPages = (selectedPagesId: Set<string>) => {
-    setSelectedPagesId(new Set(Array.from(selectedPagesId)))
-    const selectedPages = Array.from(selectedPagesId).map(pageId => getPagesMapAndSelectedPagesId[0][pageId])
+  const handleSelecPages = (newSelectedPagesId: Set<string>) => {
+    const selectedPages = Array.from(newSelectedPagesId).map(pageId => getPagesMapAndSelectedPagesId[0][pageId])
+
+    setSelectedPagesId(new Set(Array.from(newSelectedPagesId)))
     onSelect(selectedPages)
   }
   const handlePreviewPage = (previewPageId: string) => {
@@ -100,7 +99,7 @@ const NotionPageSelector = ({
                 <div className='mx-1 w-[1px] h-3 bg-gray-200' />
                 <div
                   className={cn(s['setting-icon'], 'w-6 h-6 cursor-pointer')}
-                  onClick={() => setShowDataSourceSetting(true)}
+                  onClick={() => setShowAccountSettingModal({ payload: 'data-source', onCancelCallback: mutate })}
                 />
                 <div className='grow' />
                 <SearchInput
@@ -123,16 +122,8 @@ const NotionPageSelector = ({
             </>
           )
           : (
-            <NotionConnector onSetting={() => setShowDataSourceSetting(true)} />
+            <NotionConnector onSetting={() => setShowAccountSettingModal({ payload: 'data-source', onCancelCallback: mutate })} />
           )
-      }
-      {
-        showDataSourceSetting && (
-          <AccountSetting activeTab='data-source' onCancel={() => {
-            setShowDataSourceSetting(false)
-            mutate()
-          }} />
-        )
       }
     </div>
   )

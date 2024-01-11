@@ -1,4 +1,3 @@
-import concurrent
 import datetime
 import json
 import logging
@@ -6,23 +5,26 @@ import re
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, List, cast
+from typing import Optional, List, cast, Type, Union, Literal, AbstractSet, Collection, Any
 
+from flask import current_app, Flask
 from flask_login import current_user
 from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter, TextSplitter
+from langchain.text_splitter import TextSplitter, TS, TokenTextSplitter
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from core.data_loader.file_extractor import FileExtractor
 from core.data_loader.loader.notion import NotionLoader
-from core.docstore.dataset_docstore import DatesetDocumentStore
+from core.docstore.dataset_docstore import DatasetDocumentStore
 from core.generator.llm_generator import LLMGenerator
 from core.index.index import IndexBuilder
-from core.llm.error import ProviderTokenNotInitError
-from core.llm.llm_builder import LLMBuilder
-from core.llm.streamable_open_ai import StreamableOpenAI
-from core.spiltter.fixed_text_splitter import FixedRecursiveCharacterTextSplitter
-from core.llm.token_calculator import TokenCalculator
+from core.model_manager import ModelManager
+from core.errors.error import ProviderTokenNotInitError
+from core.model_runtime.entities.model_entities import ModelType, PriceType
+from core.model_runtime.model_providers.__base.large_language_model import LargeLanguageModel
+from core.model_runtime.model_providers.__base.text_embedding_model import TextEmbeddingModel
+from core.model_runtime.model_providers.__base.tokenizers.gpt2_tokenzier import GPT2Tokenizer
+from core.spiltter.fixed_text_splitter import FixedRecursiveCharacterTextSplitter, EnhanceRecursiveCharacterTextSplitter
 from extensions.ext_database import db
 from extensions.ext_redis import redis_client
 from extensions.ext_storage import storage
@@ -35,9 +37,9 @@ from models.source import DataSourceBinding
 
 class IndexingRunner:
 
-    def __init__(self, embedding_model_name: str = "text-embedding-ada-002"):
+    def __init__(self):
         self.storage = storage
-        self.embedding_model_name = embedding_model_name
+        self.model_manager = ModelManager()
 
     def run(self, dataset_documents: List[DatasetDocument]):
         """Run the indexing process."""
@@ -51,13 +53,13 @@ class IndexingRunner:
                 if not dataset:
                     raise ValueError("no dataset found")
 
-                # load file
-                text_docs = self._load_data(dataset_document)
-
                 # get the process rule
                 processing_rule = db.session.query(DatasetProcessRule). \
                     filter(DatasetProcessRule.id == dataset_document.dataset_process_rule_id). \
                     first()
+
+                # load file
+                text_docs = self._load_data(dataset_document, processing_rule.mode == 'automatic')
 
                 # get splitter
                 splitter = self._get_splitter(processing_rule)
@@ -70,14 +72,6 @@ class IndexingRunner:
                     dataset_document=dataset_document,
                     processing_rule=processing_rule
                 )
-                # new_documents = []
-                # for document in documents:
-                #     response = LLMGenerator.generate_qa_document(dataset.tenant_id, document.page_content)
-                #     document_qa_list = self.format_split_text(response)
-                #     for result in document_qa_list:
-                #         document = Document(page_content=result['question'], metadata={'source': result['answer']})
-                #         new_documents.append(document)
-                # build index
                 self._build_index(
                     dataset=dataset,
                     dataset_document=dataset_document,
@@ -90,28 +84,14 @@ class IndexingRunner:
                 dataset_document.error = str(e.description)
                 dataset_document.stopped_at = datetime.datetime.utcnow()
                 db.session.commit()
+            except ObjectDeletedError:
+                logging.warning('Document deleted, document id: {}'.format(dataset_document.id))
             except Exception as e:
                 logging.exception("consume document failed")
                 dataset_document.indexing_status = 'error'
                 dataset_document.error = str(e)
                 dataset_document.stopped_at = datetime.datetime.utcnow()
                 db.session.commit()
-
-    def format_split_text(self, text):
-        regex = r"Q\d+:\s*(.*?)\s*A\d+:\s*([\s\S]*?)(?=Q|$)"
-        matches = re.findall(regex, text, re.MULTILINE)
-
-        result = []
-        for match in matches:
-            q = match[0]
-            a = match[1]
-            if q and a:
-                result.append({
-                    "question": q,
-                    "answer": re.sub(r"\n\s*", "\n", a.strip())
-                })
-
-        return result
 
     def run_in_splitting_status(self, dataset_document: DatasetDocument):
         """Run the indexing process when the index_status is splitting."""
@@ -130,16 +110,16 @@ class IndexingRunner:
                 document_id=dataset_document.id
             ).all()
 
-            db.session.delete(document_segments)
+            for document_segment in document_segments:
+                db.session.delete(document_segment)
             db.session.commit()
-
-            # load file
-            text_docs = self._load_data(dataset_document)
-
             # get the process rule
             processing_rule = db.session.query(DatasetProcessRule). \
                 filter(DatasetProcessRule.id == dataset_document.dataset_process_rule_id). \
                 first()
+
+            # load file
+            text_docs = self._load_data(dataset_document, processing_rule.mode == 'automatic')
 
             # get splitter
             splitter = self._get_splitter(processing_rule)
@@ -227,22 +207,50 @@ class IndexingRunner:
             dataset_document.stopped_at = datetime.datetime.utcnow()
             db.session.commit()
 
-    def file_indexing_estimate(self, file_details: List[UploadFile], tmp_processing_rule: dict,
-                               doc_form: str = None) -> dict:
+    def file_indexing_estimate(self, tenant_id: str, file_details: List[UploadFile], tmp_processing_rule: dict,
+                               doc_form: str = None, doc_language: str = 'English', dataset_id: str = None,
+                               indexing_technique: str = 'economy') -> dict:
         """
         Estimate the indexing for the document.
         """
+        embedding_model_instance = None
+        if dataset_id:
+            dataset = Dataset.query.filter_by(
+                id=dataset_id
+            ).first()
+            if not dataset:
+                raise ValueError('Dataset not found.')
+            if dataset.indexing_technique == 'high_quality' or indexing_technique == 'high_quality':
+                if dataset.embedding_model_provider:
+                    embedding_model_instance = self.model_manager.get_model_instance(
+                        tenant_id=tenant_id,
+                        provider=dataset.embedding_model_provider,
+                        model_type=ModelType.TEXT_EMBEDDING,
+                        model=dataset.embedding_model
+                    )
+                else:
+                    embedding_model_instance = self.model_manager.get_default_model_instance(
+                        tenant_id=tenant_id,
+                        model_type=ModelType.TEXT_EMBEDDING,
+                    )
+        else:
+            if indexing_technique == 'high_quality':
+                embedding_model_instance = self.model_manager.get_default_model_instance(
+                    tenant_id=tenant_id,
+                    model_type=ModelType.TEXT_EMBEDDING,
+                )
         tokens = 0
         preview_texts = []
         total_segments = 0
         for file_detail in file_details:
-            # load data from file
-            text_docs = FileExtractor.load(file_detail)
 
             processing_rule = DatasetProcessRule(
                 mode=tmp_processing_rule["mode"],
                 rules=json.dumps(tmp_processing_rule["rules"])
             )
+
+            # load data from file
+            text_docs = FileExtractor.load(file_detail, is_automatic=processing_rule.mode == 'automatic')
 
             # get splitter
             splitter = self._get_splitter(processing_rule)
@@ -253,44 +261,97 @@ class IndexingRunner:
                 splitter=splitter,
                 processing_rule=processing_rule
             )
+
             total_segments += len(documents)
+
             for document in documents:
                 if len(preview_texts) < 5:
                     preview_texts.append(document.page_content)
+                if indexing_technique == 'high_quality' or embedding_model_instance:
+                    embedding_model_type_instance = embedding_model_instance.model_type_instance
+                    embedding_model_type_instance = cast(TextEmbeddingModel, embedding_model_type_instance)
+                    tokens += embedding_model_type_instance.get_num_tokens(
+                        model=embedding_model_instance.model,
+                        credentials=embedding_model_instance.credentials,
+                        texts=[self.filter_string(document.page_content)]
+                    )
 
-                tokens += TokenCalculator.get_num_tokens(self.embedding_model_name,
-                                                         self.filter_string(document.page_content))
         if doc_form and doc_form == 'qa_model':
+            model_instance = self.model_manager.get_default_model_instance(
+                tenant_id=tenant_id,
+                model_type=ModelType.LLM
+            )
+
+            model_type_instance = model_instance.model_type_instance
+            model_type_instance = cast(LargeLanguageModel, model_type_instance)
+
             if len(preview_texts) > 0:
                 # qa model document
-                llm: StreamableOpenAI = LLMBuilder.to_llm(
-                    tenant_id=current_user.current_tenant_id,
-                    model_name='gpt-3.5-turbo',
-                    max_tokens=2000
-                )
-                response = LLMGenerator.generate_qa_document_sync(llm, preview_texts[0])
+                response = LLMGenerator.generate_qa_document(current_user.current_tenant_id, preview_texts[0],
+                                                             doc_language)
                 document_qa_list = self.format_split_text(response)
+                price_info = model_type_instance.get_price(
+                    model=model_instance.model,
+                    credentials=model_instance.credentials,
+                    price_type=PriceType.INPUT,
+                    tokens=total_segments * 2000,
+                )
                 return {
                     "total_segments": total_segments * 20,
                     "tokens": total_segments * 2000,
-                    "total_price": '{:f}'.format(
-                        TokenCalculator.get_token_price('gpt-3.5-turbo', total_segments * 2000, 'completion')),
-                    "currency": TokenCalculator.get_currency(self.embedding_model_name),
+                    "total_price": '{:f}'.format(price_info.total_amount),
+                    "currency": price_info.currency,
                     "qa_preview": document_qa_list,
                     "preview": preview_texts
                 }
+        if embedding_model_instance:
+            embedding_model_type_instance = cast(TextEmbeddingModel, embedding_model_instance.model_type_instance)
+            embedding_price_info = embedding_model_type_instance.get_price(
+                model=embedding_model_instance.model,
+                credentials=embedding_model_instance.credentials,
+                price_type=PriceType.INPUT,
+                tokens=tokens
+            )
         return {
             "total_segments": total_segments,
             "tokens": tokens,
-            "total_price": '{:f}'.format(TokenCalculator.get_token_price(self.embedding_model_name, tokens)),
-            "currency": TokenCalculator.get_currency(self.embedding_model_name),
+            "total_price": '{:f}'.format(embedding_price_info.total_amount) if embedding_model_instance else 0,
+            "currency": embedding_price_info.currency if embedding_model_instance else 'USD',
             "preview": preview_texts
         }
 
-    def notion_indexing_estimate(self, notion_info_list: list, tmp_processing_rule: dict, doc_form: str = None) -> dict:
+    def notion_indexing_estimate(self, tenant_id: str, notion_info_list: list, tmp_processing_rule: dict,
+                                 doc_form: str = None, doc_language: str = 'English', dataset_id: str = None,
+                                 indexing_technique: str = 'economy') -> dict:
         """
         Estimate the indexing for the document.
         """
+        embedding_model_instance = None
+        if dataset_id:
+            dataset = Dataset.query.filter_by(
+                id=dataset_id
+            ).first()
+            if not dataset:
+                raise ValueError('Dataset not found.')
+            if dataset.indexing_technique == 'high_quality' or indexing_technique == 'high_quality':
+                if dataset.embedding_model_provider:
+                    embedding_model_instance = self.model_manager.get_model_instance(
+                        tenant_id=tenant_id,
+                        provider=dataset.embedding_model_provider,
+                        model_type=ModelType.TEXT_EMBEDDING,
+                        model=dataset.embedding_model
+                    )
+                else:
+                    embedding_model_instance = self.model_manager.get_default_model_instance(
+                        tenant_id=tenant_id,
+                        model_type=ModelType.TEXT_EMBEDDING,
+                    )
+        else:
+            if indexing_technique == 'high_quality':
+                embedding_model_instance = self.model_manager.get_default_model_instance(
+                    tenant_id=tenant_id,
+                    model_type=ModelType.TEXT_EMBEDDING
+                )
         # load data from notion
         tokens = 0
         preview_texts = []
@@ -332,39 +393,69 @@ class IndexingRunner:
                     processing_rule=processing_rule
                 )
                 total_segments += len(documents)
+
+                embedding_model_type_instance = None
+                if embedding_model_instance:
+                    embedding_model_type_instance = embedding_model_instance.model_type_instance
+                    embedding_model_type_instance = cast(TextEmbeddingModel, embedding_model_type_instance)
+
                 for document in documents:
                     if len(preview_texts) < 5:
                         preview_texts.append(document.page_content)
+                    if indexing_technique == 'high_quality' and embedding_model_type_instance:
+                        tokens += embedding_model_type_instance.get_num_tokens(
+                            model=embedding_model_instance.model,
+                            credentials=embedding_model_instance.credentials,
+                            texts=[document.page_content]
+                        )
 
-                    tokens += TokenCalculator.get_num_tokens(self.embedding_model_name, document.page_content)
         if doc_form and doc_form == 'qa_model':
+            model_instance = self.model_manager.get_default_model_instance(
+                tenant_id=tenant_id,
+                model_type=ModelType.LLM
+            )
+
+            model_type_instance = model_instance.model_type_instance
+            model_type_instance = cast(LargeLanguageModel, model_type_instance)
             if len(preview_texts) > 0:
                 # qa model document
-                llm: StreamableOpenAI = LLMBuilder.to_llm(
-                    tenant_id=current_user.current_tenant_id,
-                    model_name='gpt-3.5-turbo',
-                    max_tokens=2000
-                )
-                response = LLMGenerator.generate_qa_document_sync(llm, preview_texts[0])
+                response = LLMGenerator.generate_qa_document(current_user.current_tenant_id, preview_texts[0],
+                                                             doc_language)
                 document_qa_list = self.format_split_text(response)
+
+                price_info = model_type_instance.get_price(
+                    model=model_instance.model,
+                    credentials=model_instance.credentials,
+                    price_type=PriceType.INPUT,
+                    tokens=total_segments * 2000,
+                )
+
                 return {
                     "total_segments": total_segments * 20,
                     "tokens": total_segments * 2000,
-                    "total_price": '{:f}'.format(
-                        TokenCalculator.get_token_price('gpt-3.5-turbo', total_segments * 2000, 'completion')),
-                    "currency": TokenCalculator.get_currency(self.embedding_model_name),
+                    "total_price": '{:f}'.format(price_info.total_amount),
+                    "currency": price_info.currency,
                     "qa_preview": document_qa_list,
                     "preview": preview_texts
                 }
+
+        embedding_model_type_instance = embedding_model_instance.model_type_instance
+        embedding_model_type_instance = cast(TextEmbeddingModel, embedding_model_type_instance)
+        embedding_price_info = embedding_model_type_instance.get_price(
+            model=embedding_model_instance.model,
+            credentials=embedding_model_instance.credentials,
+            price_type=PriceType.INPUT,
+            tokens=tokens
+        )
         return {
             "total_segments": total_segments,
             "tokens": tokens,
-            "total_price": '{:f}'.format(TokenCalculator.get_token_price(self.embedding_model_name, tokens)),
-            "currency": TokenCalculator.get_currency(self.embedding_model_name),
+            "total_price": '{:f}'.format(embedding_price_info.total_amount) if embedding_model_instance else 0,
+            "currency": embedding_price_info.currency if embedding_model_instance else 'USD',
             "preview": preview_texts
         }
 
-    def _load_data(self, dataset_document: DatasetDocument) -> List[Document]:
+    def _load_data(self, dataset_document: DatasetDocument, automatic: bool = False) -> List[Document]:
         # load file
         if dataset_document.data_source_type not in ["upload_file", "notion_import"]:
             return []
@@ -379,7 +470,8 @@ class IndexingRunner:
                 filter(UploadFile.id == data_source_info['upload_file_id']). \
                 one_or_none()
 
-            text_docs = FileExtractor.load(file_detail)
+            if file_detail:
+                text_docs = FileExtractor.load(file_detail, is_automatic=automatic)
         elif dataset_document.data_source_type == 'notion_import':
             loader = NotionLoader.from_document(dataset_document)
             text_docs = loader.load()
@@ -425,7 +517,8 @@ class IndexingRunner:
             if separator:
                 separator = separator.replace('\\n', '\n')
 
-            character_splitter = FixedRecursiveCharacterTextSplitter.from_tiktoken_encoder(
+
+            character_splitter = FixedRecursiveCharacterTextSplitter.from_gpt2_encoder(
                 chunk_size=segmentation["max_tokens"],
                 chunk_overlap=0,
                 fixed_separator=separator,
@@ -433,7 +526,7 @@ class IndexingRunner:
             )
         else:
             # Automatic segmentation
-            character_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+            character_splitter = EnhanceRecursiveCharacterTextSplitter.from_gpt2_encoder(
                 chunk_size=DatasetProcessRule.AUTOMATIC_RULES['segmentation']['max_tokens'],
                 chunk_overlap=0,
                 separators=["\n\n", "。", ".", " ", ""]
@@ -452,14 +545,14 @@ class IndexingRunner:
             splitter=splitter,
             processing_rule=processing_rule,
             tenant_id=dataset.tenant_id,
-            document_form=dataset_document.doc_form
+            document_form=dataset_document.doc_form,
+            document_language=dataset_document.doc_language
         )
 
         # save node to document segment
-        doc_store = DatesetDocumentStore(
+        doc_store = DatasetDocumentStore(
             dataset=dataset,
             user_id=dataset_document.created_by,
-            embedding_model_name=self.embedding_model_name,
             document_id=dataset_document.id
         )
 
@@ -489,7 +582,8 @@ class IndexingRunner:
         return documents
 
     def _split_to_documents(self, text_docs: List[Document], splitter: TextSplitter,
-                            processing_rule: DatasetProcessRule, tenant_id: str, document_form: str) -> List[Document]:
+                            processing_rule: DatasetProcessRule, tenant_id: str,
+                            document_form: str, document_language: str) -> List[Document]:
         """
         Split the text documents into nodes.
         """
@@ -504,26 +598,31 @@ class IndexingRunner:
             documents = splitter.split_documents([text_doc])
             split_documents = []
             for document_node in documents:
-                doc_id = str(uuid.uuid4())
-                hash = helper.generate_text_hash(document_node.page_content)
-                document_node.metadata['doc_id'] = doc_id
-                document_node.metadata['doc_hash'] = hash
 
-                split_documents.append(document_node)
+                if document_node.page_content.strip():
+                    doc_id = str(uuid.uuid4())
+                    hash = helper.generate_text_hash(document_node.page_content)
+                    document_node.metadata['doc_id'] = doc_id
+                    document_node.metadata['doc_hash'] = hash
+                    # delete Spliter character
+                    page_content = document_node.page_content
+                    if page_content.startswith(".") or page_content.startswith("。"):
+                        page_content = page_content[1:]
+                    else:
+                        page_content = page_content
+                    document_node.page_content = page_content
+                    split_documents.append(document_node)
             all_documents.extend(split_documents)
         # processing qa document
         if document_form == 'qa_model':
-            llm: StreamableOpenAI = LLMBuilder.to_llm(
-                tenant_id=tenant_id,
-                model_name='gpt-3.5-turbo',
-                max_tokens=2000
-            )
             for i in range(0, len(all_documents), 10):
                 threads = []
                 sub_documents = all_documents[i:i + 10]
                 for doc in sub_documents:
                     document_format_thread = threading.Thread(target=self.format_qa_document, kwargs={
-                        'llm': llm, 'document_node': doc, 'all_qa_documents': all_qa_documents})
+                        'flask_app': current_app._get_current_object(),
+                        'tenant_id': tenant_id, 'document_node': doc, 'all_qa_documents': all_qa_documents,
+                        'document_language': document_language})
                     threads.append(document_format_thread)
                     document_format_thread.start()
                 for thread in threads:
@@ -531,29 +630,29 @@ class IndexingRunner:
             return all_qa_documents
         return all_documents
 
-    def format_qa_document(self, llm: StreamableOpenAI, document_node, all_qa_documents):
+    def format_qa_document(self, flask_app: Flask, tenant_id: str, document_node, all_qa_documents, document_language):
         format_documents = []
         if document_node.page_content is None or not document_node.page_content.strip():
             return
-        try:
-            # qa model document
-            response = LLMGenerator.generate_qa_document_sync(llm, document_node.page_content)
-            document_qa_list = self.format_split_text(response)
-            qa_documents = []
-            for result in document_qa_list:
-                qa_document = Document(page_content=result['question'], metadata=document_node.metadata.copy())
-                doc_id = str(uuid.uuid4())
-                hash = helper.generate_text_hash(result['question'])
-                qa_document.metadata['answer'] = result['answer']
-                qa_document.metadata['doc_id'] = doc_id
-                qa_document.metadata['doc_hash'] = hash
-                qa_documents.append(qa_document)
-            format_documents.extend(qa_documents)
-        except Exception as e:
-            logging.error(str(e))
+        with flask_app.app_context():
+            try:
+                # qa model document
+                response = LLMGenerator.generate_qa_document(tenant_id, document_node.page_content, document_language)
+                document_qa_list = self.format_split_text(response)
+                qa_documents = []
+                for result in document_qa_list:
+                    qa_document = Document(page_content=result['question'], metadata=document_node.metadata.copy())
+                    doc_id = str(uuid.uuid4())
+                    hash = helper.generate_text_hash(result['question'])
+                    qa_document.metadata['answer'] = result['answer']
+                    qa_document.metadata['doc_id'] = doc_id
+                    qa_document.metadata['doc_hash'] = hash
+                    qa_documents.append(qa_document)
+                format_documents.extend(qa_documents)
+            except Exception as e:
+                logging.exception(e)
 
-        all_qa_documents.extend(format_documents)
-
+            all_qa_documents.extend(format_documents)
 
     def _split_to_documents_for_estimate(self, text_docs: List[Document], splitter: TextSplitter,
                                          processing_rule: DatasetProcessRule) -> List[Document]:
@@ -615,21 +714,16 @@ class IndexingRunner:
         return text
 
     def format_split_text(self, text):
-        regex = r"Q\d+:\s*(.*?)\s*A\d+:\s*([\s\S]*?)(?=Q|$)"  # 匹配Q和A的正则表达式
-        matches = re.findall(regex, text, re.MULTILINE)  # 获取所有匹配到的结果
+        regex = r"Q\d+:\s*(.*?)\s*A\d+:\s*([\s\S]*?)(?=Q\d+:|$)" 
+        matches = re.findall(regex, text, re.UNICODE)
 
-        result = []  # 存储最终的结果
-        for match in matches:
-            q = match[0]
-            a = match[1]
-            if q and a:
-                # 如果Q和A都存在，就将其添加到结果中
-                result.append({
-                    "question": q,
-                    "answer": re.sub(r"\n\s*", "\n", a.strip())
-                })
-
-        return result
+        return [
+            {
+                "question": q,
+                "answer": re.sub(r"\n\s*", "\n", a.strip())
+            }
+            for q, a in matches if q and a
+        ]
 
     def _build_index(self, dataset: Dataset, dataset_document: DatasetDocument, documents: List[Document]) -> None:
         """
@@ -637,20 +731,38 @@ class IndexingRunner:
         """
         vector_index = IndexBuilder.get_index(dataset, 'high_quality')
         keyword_table_index = IndexBuilder.get_index(dataset, 'economy')
+        embedding_model_instance = None
+        if dataset.indexing_technique == 'high_quality':
+            embedding_model_instance = self.model_manager.get_model_instance(
+                tenant_id=dataset.tenant_id,
+                provider=dataset.embedding_model_provider,
+                model_type=ModelType.TEXT_EMBEDDING,
+                model=dataset.embedding_model
+            )
 
         # chunk nodes by chunk size
         indexing_start_at = time.perf_counter()
         tokens = 0
         chunk_size = 100
+
+        embedding_model_type_instance = None
+        if embedding_model_instance:
+            embedding_model_type_instance = embedding_model_instance.model_type_instance
+            embedding_model_type_instance = cast(TextEmbeddingModel, embedding_model_type_instance)
+
         for i in range(0, len(documents), chunk_size):
             # check document is paused
             self._check_document_paused_status(dataset_document.id)
             chunk_documents = documents[i:i + chunk_size]
-
-            tokens += sum(
-                TokenCalculator.get_num_tokens(self.embedding_model_name, document.page_content)
-                for document in chunk_documents
-            )
+            if dataset.indexing_technique == 'high_quality' or embedding_model_type_instance:
+                tokens += sum(
+                    embedding_model_type_instance.get_num_tokens(
+                        embedding_model_instance.model,
+                        embedding_model_instance.credentials,
+                        [document.page_content]
+                    )
+                    for document in chunk_documents
+                )
 
             # save vector index
             if vector_index:
@@ -666,6 +778,7 @@ class IndexingRunner:
                 DocumentSegment.status == "indexing"
             ).update({
                 DocumentSegment.status: "completed",
+                DocumentSegment.enabled: True,
                 DocumentSegment.completed_at: datetime.datetime.utcnow()
             })
 
@@ -698,6 +811,9 @@ class IndexingRunner:
         count = DatasetDocument.query.filter_by(id=document_id, is_paused=True).count()
         if count > 0:
             raise DocumentIsPausedException()
+        document = DatasetDocument.query.filter_by(id=document_id).first()
+        if not document:
+            raise DocumentIsDeletedPausedException()
 
         update_params = {
             DatasetDocument.indexing_status: after_indexing_status
@@ -716,6 +832,36 @@ class IndexingRunner:
         DocumentSegment.query.filter_by(document_id=dataset_document_id).update(update_params)
         db.session.commit()
 
+    def batch_add_segments(self, segments: List[DocumentSegment], dataset: Dataset):
+        """
+        Batch add segments index processing
+        """
+        documents = []
+        for segment in segments:
+            document = Document(
+                page_content=segment.content,
+                metadata={
+                    "doc_id": segment.index_node_id,
+                    "doc_hash": segment.index_node_hash,
+                    "document_id": segment.document_id,
+                    "dataset_id": segment.dataset_id,
+                }
+            )
+            documents.append(document)
+        # save vector index
+        index = IndexBuilder.get_index(dataset, 'high_quality')
+        if index:
+            index.add_texts(documents, duplicate_check=True)
+
+        # save keyword index
+        index = IndexBuilder.get_index(dataset, 'economy')
+        if index:
+            index.add_texts(documents)
+
 
 class DocumentIsPausedException(Exception):
+    pass
+
+
+class DocumentIsDeletedPausedException(Exception):
     pass

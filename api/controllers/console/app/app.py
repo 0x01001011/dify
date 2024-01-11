@@ -1,50 +1,29 @@
 # -*- coding:utf-8 -*-
 import json
+import logging
 from datetime import datetime
 
-import flask
-from flask_login import login_required, current_user
-from flask_restful import Resource, reqparse, fields, marshal_with, abort, inputs
-from werkzeug.exceptions import Unauthorized, Forbidden
+from flask_login import current_user
+
+from core.model_manager import ModelManager
+from core.model_runtime.entities.model_entities import ModelType
+from core.provider_manager import ProviderManager
+from libs.login import login_required
+from flask_restful import Resource, reqparse, marshal_with, abort, inputs
+from werkzeug.exceptions import Forbidden
 
 from constants.model_template import model_templates, demo_model_templates
 from controllers.console import api
-from controllers.console.app.error import AppNotFoundError
+from controllers.console.app.error import AppNotFoundError, ProviderNotInitializeError
 from controllers.console.setup import setup_required
-from controllers.console.wraps import account_initialization_required
+from controllers.console.wraps import account_initialization_required, cloud_edition_billing_resource_check
+from core.errors.error import ProviderTokenNotInitError, LLMBadRequestError
 from events.app_event import app_was_created, app_was_deleted
-from libs.helper import TimestampField
+from fields.app_fields import app_pagination_fields, app_detail_fields, template_list_fields, \
+    app_detail_fields_with_site
 from extensions.ext_database import db
 from models.model import App, AppModelConfig, Site
 from services.app_model_config_service import AppModelConfigService
-
-model_config_fields = {
-    'opening_statement': fields.String,
-    'suggested_questions': fields.Raw(attribute='suggested_questions_list'),
-    'suggested_questions_after_answer': fields.Raw(attribute='suggested_questions_after_answer_dict'),
-    'speech_to_text': fields.Raw(attribute='speech_to_text_dict'),
-    'more_like_this': fields.Raw(attribute='more_like_this_dict'),
-    'sensitive_word_avoidance': fields.Raw(attribute='sensitive_word_avoidance_dict'),
-    'model': fields.Raw(attribute='model_dict'),
-    'user_input_form': fields.Raw(attribute='user_input_form_list'),
-    'pre_prompt': fields.String,
-    'agent_mode': fields.Raw(attribute='agent_mode_dict'),
-}
-
-app_detail_fields = {
-    'id': fields.String,
-    'name': fields.String,
-    'mode': fields.String,
-    'icon': fields.String,
-    'icon_background': fields.String,
-    'enable_site': fields.Boolean,
-    'enable_api': fields.Boolean,
-    'api_rpm': fields.Integer,
-    'api_rph': fields.Integer,
-    'is_demo': fields.Boolean,
-    'model_config': fields.Nested(model_config_fields, attribute='app_model_config'),
-    'created_at': TimestampField
-}
 
 
 def _get_app(app_id, tenant_id):
@@ -55,35 +34,6 @@ def _get_app(app_id, tenant_id):
 
 
 class AppListApi(Resource):
-    prompt_config_fields = {
-        'prompt_template': fields.String,
-    }
-
-    model_config_partial_fields = {
-        'model': fields.Raw(attribute='model_dict'),
-        'pre_prompt': fields.String,
-    }
-
-    app_partial_fields = {
-        'id': fields.String,
-        'name': fields.String,
-        'mode': fields.String,
-        'icon': fields.String,
-        'icon_background': fields.String,
-        'enable_site': fields.Boolean,
-        'enable_api': fields.Boolean,
-        'is_demo': fields.Boolean,
-        'model_config': fields.Nested(model_config_partial_fields, attribute='app_model_config'),
-        'created_at': TimestampField
-    }
-
-    app_pagination_fields = {
-        'page': fields.Integer,
-        'limit': fields.Integer(attribute='per_page'),
-        'total': fields.Integer,
-        'has_more': fields.Boolean(attribute='has_next'),
-        'data': fields.List(fields.Nested(app_partial_fields), attribute='items')
-    }
 
     @setup_required
     @login_required
@@ -109,6 +59,7 @@ class AppListApi(Resource):
     @login_required
     @account_initialization_required
     @marshal_with(app_detail_fields)
+    @cloud_edition_billing_resource_check('apps')
     def post(self):
         """Create app"""
         parser = reqparse.RequestParser()
@@ -123,12 +74,42 @@ class AppListApi(Resource):
         if current_user.current_tenant.current_role not in ['admin', 'owner']:
             raise Forbidden()
 
+        try:
+            provider_manager = ProviderManager()
+            default_model_entity = provider_manager.get_default_model(
+                tenant_id=current_user.current_tenant_id,
+                model_type=ModelType.LLM
+            )
+        except (ProviderTokenNotInitError, LLMBadRequestError):
+            default_model_entity = None
+        except Exception as e:
+            logging.exception(e)
+            default_model_entity = None
+
         if args['model_config'] is not None:
             # validate config
+            model_config_dict = args['model_config']
+
+            # get model provider
+            model_manager = ModelManager()
+            model_instance = model_manager.get_default_model_instance(
+                tenant_id=current_user.current_tenant_id,
+                model_type=ModelType.LLM
+            )
+
+            if not model_instance:
+                raise ProviderNotInitializeError(
+                    f"No Default System Reasoning Model available. Please configure "
+                    f"in the Settings -> Model Provider.")
+            else:
+                model_config_dict["model"]["provider"] = model_instance.provider
+                model_config_dict["model"]["name"] = model_instance.model
+
             model_configuration = AppModelConfigService.validate_configuration(
+                tenant_id=current_user.current_tenant_id,
                 account=current_user,
-                config=args['model_config'],
-                mode=args['mode']
+                config=model_config_dict,
+                app_mode=args['mode']
             )
 
             app = App(
@@ -140,21 +121,8 @@ class AppListApi(Resource):
                 status='normal'
             )
 
-            app_model_config = AppModelConfig(
-                provider="",
-                model_id="",
-                configs={},
-                opening_statement=model_configuration['opening_statement'],
-                suggested_questions=json.dumps(model_configuration['suggested_questions']),
-                suggested_questions_after_answer=json.dumps(model_configuration['suggested_questions_after_answer']),
-                speech_to_text=json.dumps(model_configuration['speech_to_text']),
-                more_like_this=json.dumps(model_configuration['more_like_this']),
-                sensitive_word_avoidance=json.dumps(model_configuration['sensitive_word_avoidance']),
-                model=json.dumps(model_configuration['model']),
-                user_input_form=json.dumps(model_configuration['user_input_form']),
-                pre_prompt=model_configuration['pre_prompt'],
-                agent_mode=json.dumps(model_configuration['agent_mode']),
-            )
+            app_model_config = AppModelConfig()
+            app_model_config = app_model_config.from_model_config_dict(model_configuration)
         else:
             if 'mode' not in args or args['mode'] is None:
                 abort(400, message="mode is required")
@@ -163,6 +131,23 @@ class AppListApi(Resource):
 
             app = App(**model_config_template['app'])
             app_model_config = AppModelConfig(**model_config_template['model_config'])
+
+            # get model provider
+            model_manager = ModelManager()
+
+            try:
+                model_instance = model_manager.get_default_model_instance(
+                    tenant_id=current_user.current_tenant_id,
+                    model_type=ModelType.LLM
+                )
+            except ProviderTokenNotInitError:
+                model_instance = None
+
+            if model_instance:
+                model_dict = app_model_config.model_dict
+                model_dict['provider'] = model_instance.provider
+                model_dict['name'] = model_instance.model
+                app_model_config.model = json.dumps(model_dict)
 
         app.name = args['name']
         app.mode = args['mode']
@@ -198,18 +183,6 @@ class AppListApi(Resource):
 
 
 class AppTemplateApi(Resource):
-    template_fields = {
-        'name': fields.String,
-        'icon': fields.String,
-        'icon_background': fields.String,
-        'description': fields.String,
-        'mode': fields.String,
-        'model_config': fields.Nested(model_config_fields),
-    }
-
-    template_list_fields = {
-        'data': fields.List(fields.Nested(template_fields)),
-    }
 
     @setup_required
     @login_required
@@ -228,38 +201,6 @@ class AppTemplateApi(Resource):
 
 
 class AppApi(Resource):
-    site_fields = {
-        'access_token': fields.String(attribute='code'),
-        'code': fields.String,
-        'title': fields.String,
-        'icon': fields.String,
-        'icon_background': fields.String,
-        'description': fields.String,
-        'default_language': fields.String,
-        'customize_domain': fields.String,
-        'copyright': fields.String,
-        'privacy_policy': fields.String,
-        'customize_token_strategy': fields.String,
-        'prompt_public': fields.Boolean,
-        'app_base_url': fields.String,
-    }
-
-    app_detail_fields_with_site = {
-        'id': fields.String,
-        'name': fields.String,
-        'mode': fields.String,
-        'icon': fields.String,
-        'icon_background': fields.String,
-        'enable_site': fields.Boolean,
-        'enable_api': fields.Boolean,
-        'api_rpm': fields.Integer,
-        'api_rph': fields.Integer,
-        'is_demo': fields.Boolean,
-        'model_config': fields.Nested(model_config_fields, attribute='app_model_config'),
-        'site': fields.Nested(site_fields),
-        'api_base_url': fields.String,
-        'created_at': TimestampField
-    }
 
     @setup_required
     @login_required
@@ -278,6 +219,10 @@ class AppApi(Resource):
     def delete(self, app_id):
         """Delete app"""
         app_id = str(app_id)
+
+        if current_user.current_tenant.current_role not in ['admin', 'owner']:
+            raise Forbidden()
+
         app = _get_app(app_id, current_user.current_tenant_id)
 
         db.session.delete(app)
@@ -377,29 +322,6 @@ class AppApiStatus(Resource):
         return app
 
 
-class AppRateLimit(Resource):
-    @setup_required
-    @login_required
-    @account_initialization_required
-    @marshal_with(app_detail_fields)
-    def post(self, app_id):
-        parser = reqparse.RequestParser()
-        parser.add_argument('api_rpm', type=inputs.natural, required=False, location='json')
-        parser.add_argument('api_rph', type=inputs.natural, required=False, location='json')
-        args = parser.parse_args()
-
-        app_id = str(app_id)
-        app = _get_app(app_id, current_user.current_tenant_id)
-
-        if args.get('api_rpm'):
-            app.api_rpm = args.get('api_rpm')
-        if args.get('api_rph'):
-            app.api_rph = args.get('api_rph')
-        app.updated_at = datetime.utcnow()
-        db.session.commit()
-        return app
-
-
 class AppCopy(Resource):
     @staticmethod
     def create_app_copy(app):
@@ -419,22 +341,9 @@ class AppCopy(Resource):
 
     @staticmethod
     def create_app_model_config_copy(app_config, copy_app_id):
-        copy_app_model_config = AppModelConfig(
-            app_id=copy_app_id,
-            provider=app_config.provider,
-            model_id=app_config.model_id,
-            configs=app_config.configs,
-            opening_statement=app_config.opening_statement,
-            suggested_questions=app_config.suggested_questions,
-            suggested_questions_after_answer=app_config.suggested_questions_after_answer,
-            speech_to_text=app_config.speech_to_text,
-            more_like_this=app_config.more_like_this,
-            sensitive_word_avoidance=app_config.sensitive_word_avoidance,
-            model=app_config.model,
-            user_input_form=app_config.user_input_form,
-            pre_prompt=app_config.pre_prompt,
-            agent_mode=app_config.agent_mode
-        )
+        copy_app_model_config = app_config.copy()
+        copy_app_model_config.app_id = copy_app_id
+
         return copy_app_model_config
 
     @setup_required
@@ -462,16 +371,6 @@ class AppCopy(Resource):
         return copy_app, 201
 
 
-class AppExport(Resource):
-
-    @setup_required
-    @login_required
-    @account_initialization_required
-    def post(self, app_id):
-        # todo
-        pass
-
-
 api.add_resource(AppListApi, '/apps')
 api.add_resource(AppTemplateApi, '/app-templates')
 api.add_resource(AppApi, '/apps/<uuid:app_id>')
@@ -480,4 +379,3 @@ api.add_resource(AppNameApi, '/apps/<uuid:app_id>/name')
 api.add_resource(AppIconApi, '/apps/<uuid:app_id>/icon')
 api.add_resource(AppSiteStatus, '/apps/<uuid:app_id>/site-enable')
 api.add_resource(AppApiStatus, '/apps/<uuid:app_id>/api-enable')
-api.add_resource(AppRateLimit, '/apps/<uuid:app_id>/rate-limit')

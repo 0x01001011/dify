@@ -1,14 +1,14 @@
 const translation = {
   list: {
     title: '文档',
-    desc: '数据集的所有文件都在这里显示，整个数据集都可以链接到 Dify 引用或通过 Chat 插件进行索引。',
+    desc: '知识库的所有文件都在这里显示，整个知识库都可以链接到 Dify 引用或通过 Chat 插件进行索引。',
     addFile: '添加文件',
     addPages: '添加页面',
     table: {
       header: {
         fileName: '文件名',
         words: '字符数',
-        hitCount: '命中次数',
+        hitCount: '召回次数',
         uploadTime: '上传时间',
         status: '状态',
         action: '操作',
@@ -17,8 +17,11 @@ const translation = {
     action: {
       uploadFile: '上传新文件',
       settings: '分段设置',
+      addButton: '添加分段',
       add: '添加新分段',
+      batchAdd: '批量添加',
       archive: '归档',
+      unarchive: '撤销归档',
       delete: '删除',
       enableWarning: '归档的文件无法启用',
       sync: '同步',
@@ -52,6 +55,24 @@ const translation = {
     delete: {
       title: '确定删除吗？',
       content: '如果您需要稍后恢复处理，您将从您离开的地方继续',
+    },
+    batchModal: {
+      title: '批量添加分段',
+      csvUploadTitle: '将您的 CSV 文件拖放到此处，或',
+      browse: '选择文件',
+      tip: 'CSV 文件必须符合以下结构：',
+      question: '问题',
+      answer: '回答',
+      contentTitle: '分段内容',
+      content: '内容',
+      template: '下载模板',
+      cancel: '取消',
+      run: '导入',
+      runError: '批量导入失败',
+      processing: '批量处理中',
+      completed: '导入完成',
+      error: '导入出错',
+      ok: '确定',
     },
   },
   metadata: {
@@ -194,7 +215,7 @@ const translation = {
         segmentLength: '段落长度',
         avgParagraphLength: '平均段落长度',
         paragraphs: '段落数量',
-        hitCount: '命中次数',
+        hitCount: '召回次数',
         embeddingTime: '嵌入时间',
         embeddedSpend: '嵌入花费',
       },
@@ -307,8 +328,10 @@ const translation = {
   segment: {
     paragraphs: '段落',
     keywords: '关键词',
+    addKeyWord: '添加关键词',
+    keywordError: '关键词最大长度为 20',
     characters: '字符',
-    hitCount: '命中次数',
+    hitCount: '召回次数',
     vectorHash: '向量哈希：',
     questionPlaceholder: '在这里添加问题',
     questionEmpty: '问题不能为空',
@@ -318,6 +341,7 @@ const translation = {
     contentEmpty: '内容不能为空',
     newTextSegment: '新文本分段',
     newQaSegment: '新问答分段',
+    delete: '删除这个分段？',
   },
 }
 

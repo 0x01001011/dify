@@ -7,6 +7,7 @@ const translation = {
     action: {
       pin: 'Pin',
       unpin: 'Unpin',
+      rename: 'Rename',
       delete: 'Delete',
     },
     delete: {
@@ -68,7 +69,7 @@ const translation = {
         },
         google: 'Searching Google {{query}}',
         wikipedia: 'Searching Wikipedia {{query}}',
-        dataset: 'Retrieving dataset {datasetName}',
+        dataset: 'Retrieving Knowledge {datasetName}',
         date: 'Searching date',
       },
     },

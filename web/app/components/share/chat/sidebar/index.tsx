@@ -18,8 +18,10 @@ export type ISidebarProps = {
   currentId: string
   onCurrentIdChange: (id: string) => void
   list: ConversationItem[]
+  onListChanged: (newList: ConversationItem[]) => void
   isClearConversationList: boolean
   pinnedList: ConversationItem[]
+  onPinnedListChanged: (newList: ConversationItem[]) => void
   isClearPinnedConversationList: boolean
   isInstalledApp: boolean
   installedAppId?: string
@@ -33,6 +35,7 @@ export type ISidebarProps = {
   onUnpin: (id: string) => void
   controlUpdateList: number
   onDelete: (id: string) => void
+  onStartChat: (inputs: Record<string, any>) => void
 }
 
 const Sidebar: FC<ISidebarProps> = ({
@@ -40,8 +43,10 @@ const Sidebar: FC<ISidebarProps> = ({
   currentId,
   onCurrentIdChange,
   list,
+  onListChanged,
   isClearConversationList,
   pinnedList,
+  onPinnedListChanged,
   isClearPinnedConversationList,
   isInstalledApp,
   installedAppId,
@@ -55,6 +60,7 @@ const Sidebar: FC<ISidebarProps> = ({
   onUnpin,
   controlUpdateList,
   onDelete,
+  onStartChat,
 }) => {
   const { t } = useTranslation()
   const [hasPinned, setHasPinned] = useState(false)
@@ -85,7 +91,7 @@ const Sidebar: FC<ISidebarProps> = ({
     <div
       className={
         cn(
-          (isInstalledApp || isUniversalChat) ? 'tablet:h-[calc(100vh_-_74px)]' : 'tablet:h-[calc(100vh_-_3rem)]',
+          (isInstalledApp || isUniversalChat) ? 'tablet:h-[calc(100vh_-_74px)]' : '',
           'shrink-0 flex flex-col bg-white pc:w-[244px] tablet:w-[192px] mobile:w-[240px]  border-r border-gray-200 mobile:h-screen',
         )
       }
@@ -100,8 +106,8 @@ const Sidebar: FC<ISidebarProps> = ({
       )}
       <div className="flex flex-shrink-0 p-4 !pb-0">
         <Button
-          onClick={() => { onCurrentIdChange('-1') }}
-          className="group block w-full flex-shrink-0 !justify-start !h-9 text-primary-600 items-center text-sm">
+          onClick={() => onStartChat({})}
+          className="flex group w-full flex-shrink-0 !justify-start !h-9 text-primary-600 items-center text-sm">
           <PencilSquareIcon className="mr-2 h-4 w-4" /> {t('share.chat.newChat')}
         </Button>
       </div>
@@ -115,6 +121,7 @@ const Sidebar: FC<ISidebarProps> = ({
               currentId={currentId}
               onCurrentIdChange={onCurrentIdChange}
               list={pinnedList}
+              onListChanged={onPinnedListChanged}
               isClearConversationList={isClearPinnedConversationList}
               isInstalledApp={isInstalledApp}
               installedAppId={installedAppId}
@@ -138,6 +145,7 @@ const Sidebar: FC<ISidebarProps> = ({
             currentId={currentId}
             onCurrentIdChange={onCurrentIdChange}
             list={list}
+            onListChanged={onListChanged}
             isClearConversationList={isClearConversationList}
             isInstalledApp={isInstalledApp}
             installedAppId={installedAppId}

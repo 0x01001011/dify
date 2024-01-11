@@ -1,28 +1,28 @@
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, cast
 
 from langchain.schema import Document
 from sqlalchemy import func
 
-from core.llm.token_calculator import TokenCalculator
+from core.model_manager import ModelManager
+from core.model_runtime.entities.model_entities import ModelType
+from core.model_runtime.model_providers.__base.text_embedding_model import TextEmbeddingModel
 from extensions.ext_database import db
 from models.dataset import Dataset, DocumentSegment
 
 
-class DatesetDocumentStore:
+class DatasetDocumentStore:
     def __init__(
-        self,
-        dataset: Dataset,
-        user_id: str,
-        embedding_model_name: str,
-        document_id: Optional[str] = None,
+            self,
+            dataset: Dataset,
+            user_id: str,
+            document_id: Optional[str] = None,
     ):
         self._dataset = dataset
         self._user_id = user_id
-        self._embedding_model_name = embedding_model_name
         self._document_id = document_id
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "DatesetDocumentStore":
+    def from_dict(cls, config_dict: Dict[str, Any]) -> "DatasetDocumentStore":
         return cls(**config_dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -38,10 +38,6 @@ class DatesetDocumentStore:
     @property
     def user_id(self) -> Any:
         return self._user_id
-
-    @property
-    def embedding_model_name(self) -> Any:
-        return self._embedding_model_name
 
     @property
     def docs(self) -> Dict[str, Document]:
@@ -65,7 +61,7 @@ class DatesetDocumentStore:
         return output
 
     def add_documents(
-        self, docs: Sequence[Document], allow_update: bool = True
+            self, docs: Sequence[Document], allow_update: bool = True
     ) -> None:
         max_position = db.session.query(func.max(DocumentSegment.position)).filter(
             DocumentSegment.document_id == self._document_id
@@ -73,6 +69,15 @@ class DatesetDocumentStore:
 
         if max_position is None:
             max_position = 0
+        embedding_model = None
+        if self._dataset.indexing_technique == 'high_quality':
+            model_manager = ModelManager()
+            embedding_model = model_manager.get_model_instance(
+                tenant_id=self._dataset.tenant_id,
+                provider=self._dataset.embedding_model_provider,
+                model_type=ModelType.TEXT_EMBEDDING,
+                model=self._dataset.embedding_model
+            )
 
         for doc in docs:
             if not isinstance(doc, Document):
@@ -88,7 +93,16 @@ class DatesetDocumentStore:
                 )
 
             # calc embedding use tokens
-            tokens = TokenCalculator.get_num_tokens(self._embedding_model_name, doc.page_content)
+            if embedding_model:
+                model_type_instance = embedding_model.model_type_instance
+                model_type_instance = cast(TextEmbeddingModel, model_type_instance)
+                tokens = model_type_instance.get_num_tokens(
+                    model=embedding_model.model,
+                    credentials=embedding_model.credentials,
+                    texts=[doc.page_content]
+                )
+            else:
+                tokens = 0
 
             if not segment_document:
                 max_position += 1
@@ -103,6 +117,7 @@ class DatesetDocumentStore:
                     content=doc.page_content,
                     word_count=len(doc.page_content),
                     tokens=tokens,
+                    enabled=False,
                     created_by=self._user_id,
                 )
                 if 'answer' in doc.metadata and doc.metadata['answer']:
@@ -125,7 +140,7 @@ class DatesetDocumentStore:
         return result is not None
 
     def get_document(
-        self, doc_id: str, raise_error: bool = True
+            self, doc_id: str, raise_error: bool = True
     ) -> Optional[Document]:
         document_segment = self.get_document_segment(doc_id)
 

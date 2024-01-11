@@ -18,6 +18,6 @@ else
 fi
 
 export NEXT_PUBLIC_SENTRY_DSN=${SENTRY_DSN}
+export NEXT_PUBLIC_SITE_ABOUT=${SITE_ABOUT}
 
-/usr/local/bin/pm2 -v
-/usr/local/bin/pm2-runtime start /app/web/pm2.json
+node ./server.js

@@ -4,13 +4,16 @@ import datetime
 import time
 import random
 import uuid
-from typing import Optional, List
+from typing import Optional, List, cast
 
 from flask import current_app
 from sqlalchemy import func
 
-from core.llm.token_calculator import TokenCalculator
-from events.event_handlers.document_index_event import document_index_created
+from core.index.index import IndexBuilder
+from core.errors.error import LLMBadRequestError, ProviderTokenNotInitError
+from core.model_manager import ModelManager
+from core.model_runtime.entities.model_entities import ModelType
+from core.model_runtime.model_providers.__base.text_embedding_model import TextEmbeddingModel
 from extensions.ext_redis import redis_client
 from flask_login import current_user
 
@@ -19,21 +22,21 @@ from events.document_event import document_was_deleted
 from extensions.ext_database import db
 from libs import helper
 from models.account import Account
-from models.dataset import Dataset, Document, DatasetQuery, DatasetProcessRule, AppDatasetJoin, DocumentSegment
+from models.dataset import Dataset, Document, DatasetQuery, DatasetProcessRule, AppDatasetJoin, DocumentSegment, \
+    DatasetCollectionBinding
 from models.model import UploadFile
 from models.source import DataSourceBinding
 from services.errors.account import NoPermissionError
 from services.errors.dataset import DatasetNameDuplicateError
 from services.errors.document import DocumentIndexingError
 from services.errors.file import FileNotExistsError
+from services.vector_service import VectorService
 from tasks.clean_notion_document_task import clean_notion_document_task
 from tasks.deal_dataset_vector_index_task import deal_dataset_vector_index_task
 from tasks.document_indexing_task import document_indexing_task
 from tasks.document_indexing_update_task import document_indexing_update_task
-from tasks.create_segment_to_index_task import create_segment_to_index_task
-from tasks.update_segment_index_task import update_segment_index_task
-from tasks.update_segment_keyword_index_task\
-    import update_segment_keyword_index_task
+from tasks.recover_document_indexing_task import recover_document_indexing_task
+from tasks.delete_segment_from_index_task import delete_segment_from_index_task
 
 
 class DatasetService:
@@ -89,12 +92,20 @@ class DatasetService:
         if Dataset.query.filter_by(name=name, tenant_id=tenant_id).first():
             raise DatasetNameDuplicateError(
                 f'Dataset with name {name} already exists.')
-
+        embedding_model = None
+        if indexing_technique == 'high_quality':
+            model_manager = ModelManager()
+            embedding_model = model_manager.get_default_model_instance(
+                tenant_id=tenant_id,
+                model_type=ModelType.TEXT_EMBEDDING
+            )
         dataset = Dataset(name=name, indexing_technique=indexing_technique)
         # dataset = Dataset(name=name, provider=provider, config=config)
         dataset.created_by = account.id
         dataset.updated_by = account.id
         dataset.tenant_id = tenant_id
+        dataset.embedding_model_provider = embedding_model.provider if embedding_model else None
+        dataset.embedding_model = embedding_model.model if embedding_model else None
         db.session.add(dataset)
         db.session.commit()
         return dataset
@@ -110,24 +121,71 @@ class DatasetService:
             return dataset
 
     @staticmethod
+    def check_dataset_model_setting(dataset):
+        if dataset.indexing_technique == 'high_quality':
+            try:
+                model_manager = ModelManager()
+                model_manager.get_model_instance(
+                    tenant_id=dataset.tenant_id,
+                    provider=dataset.embedding_model_provider,
+                    model_type=ModelType.TEXT_EMBEDDING,
+                    model=dataset.embedding_model
+                )
+            except LLMBadRequestError:
+                raise ValueError(
+                    f"No Embedding Model available. Please configure a valid provider "
+                    f"in the Settings -> Model Provider.")
+            except ProviderTokenNotInitError as ex:
+                raise ValueError(f"The dataset in unavailable, due to: "
+                                 f"{ex.description}")
+
+    @staticmethod
     def update_dataset(dataset_id, data, user):
+        filtered_data = {k: v for k, v in data.items() if v is not None or k == 'description'}
         dataset = DatasetService.get_dataset(dataset_id)
         DatasetService.check_dataset_permission(dataset, user)
+        action = None
         if dataset.indexing_technique != data['indexing_technique']:
             # if update indexing_technique
             if data['indexing_technique'] == 'economy':
-                deal_dataset_vector_index_task.delay(dataset_id, 'remove')
+                action = 'remove'
+                filtered_data['embedding_model'] = None
+                filtered_data['embedding_model_provider'] = None
+                filtered_data['collection_binding_id'] = None
             elif data['indexing_technique'] == 'high_quality':
-                deal_dataset_vector_index_task.delay(dataset_id, 'add')
-        filtered_data = {k: v for k, v in data.items() if v is not None or k == 'description'}
+                action = 'add'
+                # get embedding model setting
+                try:
+                    model_manager = ModelManager()
+                    embedding_model = model_manager.get_default_model_instance(
+                        tenant_id=current_user.current_tenant_id,
+                        model_type=ModelType.TEXT_EMBEDDING
+                    )
+                    filtered_data['embedding_model'] = embedding_model.model
+                    filtered_data['embedding_model_provider'] = embedding_model.provider
+                    dataset_collection_binding = DatasetCollectionBindingService.get_dataset_collection_binding(
+                        embedding_model.provider,
+                        embedding_model.model
+                    )
+                    filtered_data['collection_binding_id'] = dataset_collection_binding.id
+                except LLMBadRequestError:
+                    raise ValueError(
+                        f"No Embedding Model available. Please configure a valid provider "
+                        f"in the Settings -> Model Provider.")
+                except ProviderTokenNotInitError as ex:
+                    raise ValueError(ex.description)
 
         filtered_data['updated_by'] = user.id
         filtered_data['updated_at'] = datetime.datetime.now()
 
+        # update Retrieval model
+        filtered_data['retrieval_model'] = data['retrieval_model']
+
         dataset.query.filter_by(id=dataset_id).update(filtered_data)
 
         db.session.commit()
-
+        if action:
+            deal_dataset_vector_index_task.delay(dataset_id, action)
         return dataset
 
     @staticmethod
@@ -278,8 +336,9 @@ class DocumentService:
             "github_link": str,
             "open_source_license": str,
             "commit_date": str,
-            "commit_author": str
-        }
+            "commit_author": str,
+        },
+        "others": dict
     }
 
     @staticmethod
@@ -334,9 +393,6 @@ class DocumentService:
 
     @staticmethod
     def delete_document(document):
-        if document.indexing_status in ["parsing", "cleaning", "splitting", "indexing"]:
-            raise DocumentIndexingError()
-
         # trigger document_was_deleted signal
         document_was_deleted.send(document.id, dataset_id=document.dataset_id)
 
@@ -364,8 +420,8 @@ class DocumentService:
             raise DocumentIndexingError()
         # update document to be recover
         document.is_paused = False
-        document.paused_by = current_user.id
-        document.paused_at = time.time()
+        document.paused_by = None
+        document.paused_at = None
 
         db.session.add(document)
         db.session.commit()
@@ -373,7 +429,7 @@ class DocumentService:
         indexing_cache_key = 'document_{}_is_paused'.format(document.id)
         redis_client.delete(indexing_cache_key)
         # trigger async task
-        document_indexing_task.delay(document.dataset_id, document.id)
+        recover_document_indexing_task.delay(document.dataset_id, document.id)
 
     @staticmethod
     def get_documents_position(dataset_id):
@@ -387,16 +443,21 @@ class DocumentService:
     def save_document_with_dataset_id(dataset: Dataset, document_data: dict,
                                       account: Account, dataset_process_rule: Optional[DatasetProcessRule] = None,
                                       created_from: str = 'web'):
+
         # check document limit
         if current_app.config['EDITION'] == 'CLOUD':
-            documents_count = DocumentService.get_tenant_documents_count()
-            tenant_document_count = int(current_app.config['TENANT_DOCUMENT_COUNT'])
-            if documents_count > tenant_document_count:
-                raise ValueError(f"over document limit {tenant_document_count}.")
+            if 'original_document_id' not in document_data or not document_data['original_document_id']:
+                count = 0
+                if document_data["data_source"]["type"] == "upload_file":
+                    upload_file_list = document_data["data_source"]["info_list"]['file_info_list']['file_ids']
+                    count = len(upload_file_list)
+                elif document_data["data_source"]["type"] == "notion_import":
+                    notion_info_list = document_data["data_source"]['info_list']['notion_info_list']
+                    for notion_info in notion_info_list:
+                        count = count + len(notion_info['pages'])
         # if dataset is empty, update dataset data_source_type
         if not dataset.data_source_type:
             dataset.data_source_type = document_data["data_source"]["type"]
-            db.session.commit()
 
         if not dataset.indexing_technique:
             if 'indexing_technique' not in document_data \
@@ -404,6 +465,33 @@ class DocumentService:
                 raise ValueError("Indexing technique is required")
 
             dataset.indexing_technique = document_data["indexing_technique"]
+            if document_data["indexing_technique"] == 'high_quality':
+                model_manager = ModelManager()
+                embedding_model = model_manager.get_default_model_instance(
+                    tenant_id=current_user.current_tenant_id,
+                    model_type=ModelType.TEXT_EMBEDDING
+                )
+                dataset.embedding_model = embedding_model.model
+                dataset.embedding_model_provider = embedding_model.provider
+                dataset_collection_binding = DatasetCollectionBindingService.get_dataset_collection_binding(
+                    embedding_model.provider,
+                    embedding_model.model
+                )
+                dataset.collection_binding_id = dataset_collection_binding.id
+                if not dataset.retrieval_model:
+                    default_retrieval_model = {
+                        'search_method': 'semantic_search',
+                        'reranking_enable': False,
+                        'reranking_model': {
+                            'reranking_provider_name': '',
+                            'reranking_model_name': ''
+                        },
+                        'top_k': 2,
+                        'score_threshold_enabled': False
+                    }
+
+                    dataset.retrieval_model = document_data.get('retrieval_model') if document_data.get(
+                        'retrieval_model') else default_retrieval_model
 
         documents = []
         batch = time.strftime('%Y%m%d%H%M%S') + str(random.randint(100000, 999999))
@@ -448,11 +536,12 @@ class DocumentService:
                     data_source_info = {
                         "upload_file_id": file_id,
                     }
-                    document = DocumentService.save_document(dataset, dataset_process_rule.id,
-                                                             document_data["data_source"]["type"],
-                                                             document_data["doc_form"],
-                                                             data_source_info, created_from, position,
-                                                             account, file_name, batch)
+                    document = DocumentService.build_document(dataset, dataset_process_rule.id,
+                                                              document_data["data_source"]["type"],
+                                                              document_data["doc_form"],
+                                                              document_data["doc_language"],
+                                                              data_source_info, created_from, position,
+                                                              account, file_name, batch)
                     db.session.add(document)
                     db.session.flush()
                     document_ids.append(document.id)
@@ -493,23 +582,14 @@ class DocumentService:
                                 "notion_page_icon": page['page_icon'],
                                 "type": page['type']
                             }
-                            document = DocumentService.save_document(dataset, dataset_process_rule.id,
-                                                                     document_data["data_source"]["type"],
-                                                                     document_data["doc_form"],
-                                                                     data_source_info, created_from, position,
-                                                                     account, page['page_name'], batch)
-                            # if page['type'] == 'database':
-                            #     document.splitting_completed_at = datetime.datetime.utcnow()
-                            #     document.cleaning_completed_at = datetime.datetime.utcnow()
-                            #     document.parsing_completed_at = datetime.datetime.utcnow()
-                            #     document.completed_at = datetime.datetime.utcnow()
-                            #     document.indexing_status = 'completed'
-                            #     document.word_count = 0
-                            #     document.tokens = 0
-                            #     document.indexing_latency = 0
+                            document = DocumentService.build_document(dataset, dataset_process_rule.id,
+                                                                      document_data["data_source"]["type"],
+                                                                      document_data["doc_form"],
+                                                                      document_data["doc_language"],
+                                                                      data_source_info, created_from, position,
+                                                                      account, page['page_name'], batch)
                             db.session.add(document)
                             db.session.flush()
-                            # if page['type'] != 'database':
                             document_ids.append(document.id)
                             documents.append(document)
                             position += 1
@@ -521,15 +601,15 @@ class DocumentService:
             db.session.commit()
 
             # trigger async task
-            #document_index_created.send(dataset.id, document_ids=document_ids)
             document_indexing_task.delay(dataset.id, document_ids)
 
         return documents, batch
 
     @staticmethod
-    def save_document(dataset: Dataset, process_rule_id: str, data_source_type: str, document_form: str,
-                      data_source_info: dict, created_from: str, position: int, account: Account, name: str,
-                      batch: str):
+    def build_document(dataset: Dataset, process_rule_id: str, data_source_type: str, document_form: str,
+                       document_language: str, data_source_info: dict, created_from: str, position: int,
+                       account: Account,
+                       name: str, batch: str):
         document = Document(
             tenant_id=dataset.tenant_id,
             dataset_id=dataset.id,
@@ -541,7 +621,8 @@ class DocumentService:
             name=name,
             created_from=created_from,
             created_by=account.id,
-            doc_form=document_form
+            doc_form=document_form,
+            doc_language=document_language
         )
         return document
 
@@ -557,9 +638,13 @@ class DocumentService:
     def update_document_with_dataset_id(dataset: Dataset, document_data: dict,
                                         account: Account, dataset_process_rule: Optional[DatasetProcessRule] = None,
                                         created_from: str = 'web'):
+        DatasetService.check_dataset_model_setting(dataset)
         document = DocumentService.get_document(dataset.id, document_data["original_document_id"])
         if document.display_status != 'available':
             raise ValueError("Document is not available")
+        # update document name
+        if 'name' in document_data and document_data['name']:
+            document.name = document_data['name']
         # save process rule
         if 'process_rule' in document_data and document_data['process_rule']:
             process_rule = document_data["process_rule"]
@@ -649,19 +734,54 @@ class DocumentService:
 
     @staticmethod
     def save_document_without_dataset_id(tenant_id: str, document_data: dict, account: Account):
-        # check document limit
-        if current_app.config['EDITION'] == 'CLOUD':
-            documents_count = DocumentService.get_tenant_documents_count()
-            tenant_document_count = int(current_app.config['TENANT_DOCUMENT_COUNT'])
-            if documents_count > tenant_document_count:
-                raise ValueError(f"over document limit {tenant_document_count}.")
+        count = 0
+        if document_data["data_source"]["type"] == "upload_file":
+            upload_file_list = document_data["data_source"]["info_list"]['file_info_list']['file_ids']
+            count = len(upload_file_list)
+        elif document_data["data_source"]["type"] == "notion_import":
+            notion_info_list = document_data["data_source"]['info_list']['notion_info_list']
+            for notion_info in notion_info_list:
+                count = count + len(notion_info['pages'])
+
+        embedding_model = None
+        dataset_collection_binding_id = None
+        retrieval_model = None
+        if document_data['indexing_technique'] == 'high_quality':
+            model_manager = ModelManager()
+            embedding_model = model_manager.get_default_model_instance(
+                tenant_id=current_user.current_tenant_id,
+                model_type=ModelType.TEXT_EMBEDDING
+            )
+            dataset_collection_binding = DatasetCollectionBindingService.get_dataset_collection_binding(
+                embedding_model.provider,
+                embedding_model.model
+            )
+            dataset_collection_binding_id = dataset_collection_binding.id
+            if 'retrieval_model' in document_data and document_data['retrieval_model']:
+                retrieval_model = document_data['retrieval_model']
+            else:
+                default_retrieval_model = {
+                    'search_method': 'semantic_search',
+                    'reranking_enable': False,
+                    'reranking_model': {
+                        'reranking_provider_name': '',
+                        'reranking_model_name': ''
+                    },
+                    'top_k': 2,
+                    'score_threshold_enabled': False
+                }
+                retrieval_model = default_retrieval_model
         # save dataset
         dataset = Dataset(
             tenant_id=tenant_id,
             name='',
             data_source_type=document_data["data_source"]["type"],
             indexing_technique=document_data["indexing_technique"],
-            created_by=account.id
+            created_by=account.id,
+            embedding_model=embedding_model.model if embedding_model else None,
+            embedding_model_provider=embedding_model.provider if embedding_model else None,
+            collection_binding_id=dataset_collection_binding_id,
+            retrieval_model=retrieval_model
         )
 
         db.session.add(dataset)
@@ -869,14 +989,32 @@ class SegmentService:
         if document.doc_form == 'qa_model':
             if 'answer' not in args or not args['answer']:
                 raise ValueError("Answer is required")
+            if not args['answer'].strip():
+                raise ValueError("Answer is empty")
+        if 'content' not in args or not args['content'] or not args['content'].strip():
+            raise ValueError("Content is empty")
 
     @classmethod
-    def create_segment(cls, args: dict, document: Document):
+    def create_segment(cls, args: dict, document: Document, dataset: Dataset):
         content = args['content']
         doc_id = str(uuid.uuid4())
         segment_hash = helper.generate_text_hash(content)
-        # calc embedding use tokens
-        tokens = TokenCalculator.get_num_tokens('text-embedding-ada-002', content)
+        tokens = 0
+        if dataset.indexing_technique == 'high_quality':
+            model_manager = ModelManager()
+            embedding_model = model_manager.get_model_instance(
+                tenant_id=current_user.current_tenant_id,
+                provider=dataset.embedding_model_provider,
+                model_type=ModelType.TEXT_EMBEDDING,
+                model=dataset.embedding_model
+            )
+            # calc embedding use tokens
+            model_type_instance = cast(TextEmbeddingModel, embedding_model.model_type_instance)
+            tokens = model_type_instance.get_num_tokens(
+                model=embedding_model.model,
+                credentials=embedding_model.credentials,
+                texts=[content]
+            )
         max_position = db.session.query(func.max(DocumentSegment.position)).filter(
             DocumentSegment.document_id == document.id
         ).scalar()
@@ -890,6 +1028,9 @@ class SegmentService:
             content=content,
             word_count=len(content),
             tokens=tokens,
+            status='completed',
+            indexing_at=datetime.datetime.utcnow(),
+            completed_at=datetime.datetime.utcnow(),
             created_by=current_user.id
         )
         if document.doc_form == 'qa_model':
@@ -897,44 +1038,200 @@ class SegmentService:
 
         db.session.add(segment_document)
         db.session.commit()
-        indexing_cache_key = 'segment_{}_indexing'.format(segment_document.id)
-        redis_client.setex(indexing_cache_key, 600, 1)
-        create_segment_to_index_task.delay(segment_document.id, args['keywords'])
-        return segment_document
+
+        # save vector index
+        try:
+            VectorService.create_segment_vector(args['keywords'], segment_document, dataset)
+        except Exception as e:
+            logging.exception("create segment index failed")
+            segment_document.enabled = False
+            segment_document.disabled_at = datetime.datetime.utcnow()
+            segment_document.status = 'error'
+            segment_document.error = str(e)
+            db.session.commit()
+        segment = db.session.query(DocumentSegment).filter(DocumentSegment.id == segment_document.id).first()
+        return segment
 
     @classmethod
-    def update_segment(cls, args: dict, segment: DocumentSegment, document: Document):
+    def multi_create_segment(cls, segments: list, document: Document, dataset: Dataset):
+        embedding_model = None
+        if dataset.indexing_technique == 'high_quality':
+            model_manager = ModelManager()
+            embedding_model = model_manager.get_model_instance(
+                tenant_id=current_user.current_tenant_id,
+                provider=dataset.embedding_model_provider,
+                model_type=ModelType.TEXT_EMBEDDING,
+                model=dataset.embedding_model
+            )
+        max_position = db.session.query(func.max(DocumentSegment.position)).filter(
+            DocumentSegment.document_id == document.id
+        ).scalar()
+        pre_segment_data_list = []
+        segment_data_list = []
+        for segment_item in segments:
+            content = segment_item['content']
+            doc_id = str(uuid.uuid4())
+            segment_hash = helper.generate_text_hash(content)
+            tokens = 0
+            if dataset.indexing_technique == 'high_quality' and embedding_model:
+                # calc embedding use tokens
+                model_type_instance = cast(TextEmbeddingModel, embedding_model.model_type_instance)
+                tokens = model_type_instance.get_num_tokens(
+                    model=embedding_model.model,
+                    credentials=embedding_model.credentials,
+                    texts=[content]
+                )
+            segment_document = DocumentSegment(
+                tenant_id=current_user.current_tenant_id,
+                dataset_id=document.dataset_id,
+                document_id=document.id,
+                index_node_id=doc_id,
+                index_node_hash=segment_hash,
+                position=max_position + 1 if max_position else 1,
+                content=content,
+                word_count=len(content),
+                tokens=tokens,
+                status='completed',
+                indexing_at=datetime.datetime.utcnow(),
+                completed_at=datetime.datetime.utcnow(),
+                created_by=current_user.id
+            )
+            if document.doc_form == 'qa_model':
+                segment_document.answer = segment_item['answer']
+            db.session.add(segment_document)
+            segment_data_list.append(segment_document)
+            pre_segment_data = {
+                'segment': segment_document,
+                'keywords': segment_item['keywords']
+            }
+            pre_segment_data_list.append(pre_segment_data)
+
+        try:
+            # save vector index
+            VectorService.multi_create_segment_vector(pre_segment_data_list, dataset)
+        except Exception as e:
+            logging.exception("create segment index failed")
+            for segment_document in segment_data_list:
+                segment_document.enabled = False
+                segment_document.disabled_at = datetime.datetime.utcnow()
+                segment_document.status = 'error'
+                segment_document.error = str(e)
+        db.session.commit()
+        return segment_data_list
+
+    @classmethod
+    def update_segment(cls, args: dict, segment: DocumentSegment, document: Document, dataset: Dataset):
         indexing_cache_key = 'segment_{}_indexing'.format(segment.id)
         cache_result = redis_client.get(indexing_cache_key)
         if cache_result is not None:
             raise ValueError("Segment is indexing, please try again later")
-        content = args['content']
-        if segment.content == content:
-            if document.doc_form == 'qa_model':
-                segment.answer = args['answer']
-            if args['keywords']:
-                segment.keywords = args['keywords']
-            db.session.add(segment)
+        try:
+            content = args['content']
+            if segment.content == content:
+                if document.doc_form == 'qa_model':
+                    segment.answer = args['answer']
+                if 'keywords' in args and args['keywords']:
+                    segment.keywords = args['keywords']
+                if'enabled' in args and args['enabled'] is not None:
+                    segment.enabled = args['enabled']
+                db.session.add(segment)
+                db.session.commit()
+                # update segment index task
+                if args['keywords']:
+                    kw_index = IndexBuilder.get_index(dataset, 'economy')
+                    # delete from keyword index
+                    kw_index.delete_by_ids([segment.index_node_id])
+                    # save keyword index
+                    kw_index.update_segment_keywords_index(segment.index_node_id, segment.keywords)
+            else:
+                segment_hash = helper.generate_text_hash(content)
+                tokens = 0
+                if dataset.indexing_technique == 'high_quality':
+                    model_manager = ModelManager()
+                    embedding_model = model_manager.get_model_instance(
+                        tenant_id=current_user.current_tenant_id,
+                        provider=dataset.embedding_model_provider,
+                        model_type=ModelType.TEXT_EMBEDDING,
+                        model=dataset.embedding_model
+                    )
+
+                    # calc embedding use tokens
+                    model_type_instance = cast(TextEmbeddingModel, embedding_model.model_type_instance)
+                    tokens = model_type_instance.get_num_tokens(
+                        model=embedding_model.model,
+                        credentials=embedding_model.credentials,
+                        texts=[content]
+                    )
+                segment.content = content
+                segment.index_node_hash = segment_hash
+                segment.word_count = len(content)
+                segment.tokens = tokens
+                segment.status = 'completed'
+                segment.indexing_at = datetime.datetime.utcnow()
+                segment.completed_at = datetime.datetime.utcnow()
+                segment.updated_by = current_user.id
+                segment.updated_at = datetime.datetime.utcnow()
+                if document.doc_form == 'qa_model':
+                    segment.answer = args['answer']
+                db.session.add(segment)
+                db.session.commit()
+                # update segment vector index
+                VectorService.update_segment_vector(args['keywords'], segment, dataset)
+        except Exception as e:
+            logging.exception("update segment index failed")
+            segment.enabled = False
+            segment.disabled_at = datetime.datetime.utcnow()
+            segment.status = 'error'
+            segment.error = str(e)
             db.session.commit()
-            # update segment index task
-            redis_client.setex(indexing_cache_key, 600, 1)
-            update_segment_keyword_index_task.delay(segment.id)
-        else:
-            segment_hash = helper.generate_text_hash(content)
-            # calc embedding use tokens
-            tokens = TokenCalculator.get_num_tokens('text-embedding-ada-002', content)
-            segment.content = content
-            segment.index_node_hash = segment_hash
-            segment.word_count = len(content)
-            segment.tokens = tokens
-            segment.status = 'updating'
-            segment.updated_by = current_user.id
-            segment.updated_at = datetime.datetime.utcnow()
-            if document.doc_form == 'qa_model':
-                segment.answer = args['answer']
-            db.session.add(segment)
-            db.session.commit()
-            # update segment index task
-            redis_client.setex(indexing_cache_key, 600, 1)
-            update_segment_index_task.delay(segment.id, args['keywords'])
+        segment = db.session.query(DocumentSegment).filter(DocumentSegment.id == segment.id).first()
         return segment
+
+    @classmethod
+    def delete_segment(cls, segment: DocumentSegment, document: Document, dataset: Dataset):
+        indexing_cache_key = 'segment_{}_delete_indexing'.format(segment.id)
+        cache_result = redis_client.get(indexing_cache_key)
+        if cache_result is not None:
+            raise ValueError("Segment is deleting.")
+
+        # enabled segment need to delete index
+        if segment.enabled:
+            # send delete segment index task
+            redis_client.setex(indexing_cache_key, 600, 1)
+            delete_segment_from_index_task.delay(segment.id, segment.index_node_id, dataset.id, document.id)
+        db.session.delete(segment)
+        db.session.commit()
+
+
+class DatasetCollectionBindingService:
+    @classmethod
+    def get_dataset_collection_binding(cls, provider_name: str, model_name: str,
+                                       collection_type: str = 'dataset') -> DatasetCollectionBinding:
+        dataset_collection_binding = db.session.query(DatasetCollectionBinding). \
+            filter(DatasetCollectionBinding.provider_name == provider_name,
+                   DatasetCollectionBinding.model_name == model_name,
+                   DatasetCollectionBinding.type == collection_type). \
+            order_by(DatasetCollectionBinding.created_at). \
+            first()
+
+        if not dataset_collection_binding:
+            dataset_collection_binding = DatasetCollectionBinding(
+                provider_name=provider_name,
+                model_name=model_name,
+                collection_name="Vector_index_" + str(uuid.uuid4()).replace("-", "_") + '_Node',
+                type=collection_type
+            )
+            db.session.add(dataset_collection_binding)
+            db.session.commit()
+        return dataset_collection_binding
+
+    @classmethod
+    def get_dataset_collection_binding_by_id_and_type(cls, collection_binding_id: str,
+                                                      collection_type: str = 'dataset') -> DatasetCollectionBinding:
+        dataset_collection_binding = db.session.query(DatasetCollectionBinding). \
+            filter(DatasetCollectionBinding.id == collection_binding_id,
+                   DatasetCollectionBinding.type == collection_type). \
+            order_by(DatasetCollectionBinding.created_at). \
+            first()
+
+        return dataset_collection_binding
