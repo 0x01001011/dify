@@ -3,8 +3,13 @@ services:
   # API service
   api:
     image: langgenius/dify-api:0.4.5
+    environment:
+      username: ${{ secrets.DOCKER_USER }}
+      password: ${{ secrets.DOCKER_PASSWORD }}
     restart: always
     environment:
+      USERNAME: your_username
+      PASSWORD: your_password
       # Startup mode, 'api' starts the API server.
       MODE: api
       # The log level for the application. Supported values are `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
