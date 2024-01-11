@@ -5,12 +5,14 @@ import { useRouter } from 'next/navigation'
 import classNames from 'classnames'
 import useSWR from 'swr'
 import Link from 'next/link'
+import { useContext } from 'use-context-selector'
 import Toast from '../components/base/toast'
 import style from './page.module.css'
 // import Tooltip from '@/app/components/base/tooltip/index'
 import { IS_CE_EDITION, apiPrefix } from '@/config'
 import Button from '@/app/components/base/button'
 import { login, oauth } from '@/service/common'
+import I18n from '@/context/i18n'
 
 const validEmailReg = /^[\w\.-]+@([\w-]+\.)+[\w-]{2,}$/
 
@@ -20,7 +22,11 @@ type IState = {
   google: boolean
 }
 
-function reducer(state: IState, action: { type: string; payload: any }) {
+type IAction = {
+  type: 'login' | 'login_failed' | 'github_login' | 'github_login_failed' | 'google_login' | 'google_login_failed'
+}
+
+function reducer(state: IState, action: IAction) {
   switch (action.type) {
     case 'login':
       return {
@@ -60,6 +66,7 @@ function reducer(state: IState, action: { type: string; payload: any }) {
 const NormalForm = () => {
   const { t } = useTranslation()
   const router = useRouter()
+  const { locale } = useContext(I18n)
 
   const [state, dispatch] = useReducer(reducer, {
     formValid: false,
@@ -82,7 +89,7 @@ const NormalForm = () => {
     }
     try {
       setIsLoading(true)
-      await login({
+      const res = await login({
         url: '/login',
         body: {
           email,
@@ -90,7 +97,8 @@ const NormalForm = () => {
           remember_me: true,
         },
       })
-      router.push('/apps')
+      localStorage.setItem('console_token', res.data)
+      router.replace('/apps')
     }
     finally {
       setIsLoading(false)
@@ -117,14 +125,14 @@ const NormalForm = () => {
 
   useEffect(() => {
     if (github_error !== undefined)
-      dispatch({ type: 'github_login_failed', payload: null })
+      dispatch({ type: 'github_login_failed' })
     if (github)
       window.location.href = github.redirect_url
   }, [github, github_error])
 
   useEffect(() => {
     if (google_error !== undefined)
-      dispatch({ type: 'google_login_failed', payload: null })
+      dispatch({ type: 'google_login_failed' })
     if (google)
       window.location.href = google.redirect_url
   }, [google, google])
@@ -234,6 +242,10 @@ const NormalForm = () => {
                       id="password"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter')
+                          handleEmailPasswordLogin()
+                      }}
                       type={showPassword ? 'text' : 'password'}
                       autoComplete="current-password"
                       placeholder={t('login.passwordPlaceholder') || ''}
@@ -253,6 +265,7 @@ const NormalForm = () => {
 
                 <div className='mb-2'>
                   <Button
+                    tabIndex={0}
                     type='primary'
                     onClick={handleEmailPasswordLogin}
                     disabled={isLoading}
@@ -269,13 +282,13 @@ const NormalForm = () => {
             <Link
               className='text-primary-600'
               target={'_blank'}
-              href='https://docs.dify.ai/user-agreement/terms-of-service'
+              href={locale === 'en' ? 'https://docs.dify.ai/user-agreement/terms-of-service' : 'https://docs.dify.ai/v/zh-hans/user-agreement/terms-of-service'}
             >{t('login.tos')}</Link>
             &nbsp;&&nbsp;
             <Link
               className='text-primary-600'
               target={'_blank'}
-              href='https://docs.dify.ai/user-agreement/privacy-policy'
+              href={locale === 'en' ? 'https://docs.dify.ai/user-agreement/privacy-policy' : 'https://docs.dify.ai/v/zh-hans/user-agreement/privacy-policy'}
             >{t('login.pp')}</Link>
           </div>
 

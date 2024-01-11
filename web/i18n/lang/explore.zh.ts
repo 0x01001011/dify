@@ -7,6 +7,7 @@ const translation = {
     action: {
       pin: '置顶',
       unpin: '取消置顶',
+      rename: '重命名',
       delete: '删除',
     },
     delete: {
@@ -68,7 +69,7 @@ const translation = {
         },
         google: '搜索谷歌 {{query}}',
         wikipedia: '搜索维基百科 {{query}}',
-        dataset: '检索数据集 {datasetName}',
+        dataset: '检索知识库 {datasetName}',
         date: '查询日期',
       },
     },

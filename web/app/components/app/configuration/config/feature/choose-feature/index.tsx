@@ -8,11 +8,17 @@ import FeatureItem from './feature-item'
 import Modal from '@/app/components/base/modal'
 import SuggestedQuestionsAfterAnswerIcon from '@/app/components/app/configuration/base/icons/suggested-questions-after-answer-icon'
 import { Microphone01 } from '@/app/components/base/icons/src/vender/solid/mediaAndDevices'
+import { Citations } from '@/app/components/base/icons/src/vender/solid/editor'
+import { FileSearch02 } from '@/app/components/base/icons/src/vender/solid/files'
+import { MessageFast } from '@/app/components/base/icons/src/vender/solid/communication'
 type IConfig = {
   openingStatement: boolean
   moreLikeThis: boolean
   suggestedQuestionsAfterAnswer: boolean
   speechToText: boolean
+  citation: boolean
+  moderation: boolean
+  annotation: boolean
 }
 
 export type IChooseFeatureProps = {
@@ -39,7 +45,6 @@ const ChooseFeature: FC<IChooseFeatureProps> = ({
   showSpeechToTextItem,
 }) => {
   const { t } = useTranslation()
-
   return (
     <Modal
       isShow={isShow}
@@ -85,6 +90,14 @@ const ChooseFeature: FC<IChooseFeatureProps> = ({
                   />
                 )
               }
+              <FeatureItem
+                icon={<Citations className='w-4 h-4 text-[#FD853A]' />}
+                previewImgClassName='citationPreview'
+                title={t('appDebug.feature.citation.title')}
+                description={t('appDebug.feature.citation.description')}
+                value={config.citation}
+                onChange={value => onChange('citation', value)}
+              />
             </>
           </FeatureGroup>
         )}
@@ -104,8 +117,28 @@ const ChooseFeature: FC<IChooseFeatureProps> = ({
             </>
           </FeatureGroup>
         )}
+        <FeatureGroup title={t('appDebug.feature.toolbox.title')}>
+          <>
+            <FeatureItem
+              icon={<FileSearch02 className='w-4 h-4 text-[#039855]' />}
+              previewImgClassName=''
+              title={t('appDebug.feature.moderation.title')}
+              description={t('appDebug.feature.moderation.description')}
+              value={config.moderation}
+              onChange={value => onChange('moderation', value)}
+            />
+            {isChatApp && (
+              <FeatureItem
+                icon={<MessageFast className='w-4 h-4 text-[#444CE7]' />}
+                title={t('appDebug.feature.annotation.title')}
+                description={t('appDebug.feature.annotation.description')}
+                value={config.annotation}
+                onChange={value => onChange('annotation', value)}
+              />
+            )}
+          </>
+        </FeatureGroup>
       </div>
-
     </Modal>
   )
 }

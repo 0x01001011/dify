@@ -1,5 +1,6 @@
 import type { AppMode } from './app'
 import type { DataSourceNotionPage } from './common'
+import type { RetrievalConfig } from '@/types/app'
 
 export enum DataSourceType {
   FILE = 'upload_file',
@@ -22,16 +23,25 @@ export type DataSet = {
   app_count: number
   document_count: number
   word_count: number
+  embedding_model: string
+  embedding_model_provider: string
+  embedding_available: boolean
+  retrieval_model_dict: RetrievalConfig
+  retrieval_model: RetrievalConfig
 }
 
-export type File = {
-  id: string
-  name: string
-  size: number
-  extension: string
-  mime_type: string
-  created_by: string
-  created_at: number
+export type CustomFile = File & {
+  id?: string
+  extension?: string
+  mime_type?: string
+  created_by?: string
+  created_at?: number
+}
+
+export type FileItem = {
+  fileID: string
+  file: CustomFile
+  progress: number
 }
 
 export type DataSetListResponse = {
@@ -136,6 +146,7 @@ export type DataSourceInfo = {
     created_by: string
     extension: string
   }
+  notion_page_icon?: string
 }
 
 export type InitialDocumentDetail = {
@@ -175,12 +186,21 @@ export type DocumentListResponse = {
   limit: number
 }
 
-export type CreateDocumentReq = {
+export type DocumentReq = {
   original_document_id?: string
   indexing_technique?: string
   doc_form: 'text_model' | 'qa_model'
-  data_source: DataSource
+  doc_language: string
   process_rule: ProcessRule
+}
+
+export type CreateDocumentReq = DocumentReq & {
+  data_source: DataSource
+  retrieval_model: RetrievalConfig
+}
+
+export type IndexingEstimateParams = DocumentReq & Partial<DataSource> & {
+  dataset_id: string
 }
 
 export type DataSource = {
@@ -233,7 +253,7 @@ export type FullDocumentDetail = SimpleDocumentDetail & {
   archived_reason: 'rule_modified' | 're_upload'
   archived_by: string
   archived_at: number
-  doc_type?: DocType | null
+  doc_type?: DocType | null | 'others'
   doc_metadata?: DocMetadata | null
   segment_count: number
   [key: string]: any
@@ -383,4 +403,10 @@ export type RelatedAppResponse = {
 export type SegmentUpdator = {
   content: string
   answer?: string
+  keywords?: string[]
+}
+
+export enum DocForm {
+  TEXT = 'text_model',
+  QA = 'qa_model',
 }

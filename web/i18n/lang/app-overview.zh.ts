@@ -5,20 +5,35 @@ const translation = {
     getKeyTip: '从 OpenAI 获取你的 API Key',
     placeholder: '你的 OpenAI API Key（例如 sk-xxxx）',
   },
+  apiKeyInfo: {
+    cloud: {
+      trial: {
+        title: '您正在使用 {{providerName}} 的试用配额。',
+        description: '试用配额仅供您测试使用。 在试用配额用完之前，请自行设置模型提供商或购买额外配额。',
+      },
+      exhausted: {
+        title: '您的试用额度已用完，请设置您的APIKey。',
+        description: '您的试用配额已用完。 请设置您自己的模型提供商或购买额外配额。',
+      },
+    },
+    selfHost: {
+      title: {
+        row1: '首先，',
+        row2: '设置您的模型提供商。',
+      },
+    },
+    callTimes: '调用次数',
+    usedToken: '使用 Tokens',
+    setAPIBtn: '设置模型提供商',
+    tryCloud: '或者尝试使用 Dify 的云版本并使用试用配额',
+  },
   overview: {
     title: '概览',
     appInfo: {
       explanation: '开箱即用的 AI WebApp',
       accessibleAddress: '公开访问 URL',
       preview: '预览',
-      share: {
-        entry: '分享',
-        explanation: '将以下网址分享出去，让更多人访问该应用',
-        shareUrl: '分享 URL',
-        copyLink: '复制链接',
-        regenerate: '重新生成',
-        linkCopied: '已复制',
-      },
+      regenerate: '重新生成',
       preUseReminder: '使用前请先打开开关',
       settings: {
         entry: '设置',
@@ -33,7 +48,7 @@ const translation = {
           copyright: '版权',
           copyRightPlaceholder: '请输入作者或组织名称',
           privacyPolicy: '隐私政策',
-          privacyPolicyPlaceholder: '请输入隐私政策',
+          privacyPolicyPlaceholder: '请输入隐私政策链接',
           privacyPolicyTip: '帮助访问者了解该应用收集的数据，可参考 Dify 的<privacyPolicyLink>隐私政策</privacyPolicyLink>。',
         },
       },
@@ -43,12 +58,18 @@ const translation = {
         explanation: '选择一种方式将聊天应用嵌入到你的网站中',
         iframe: '将以下 iframe 嵌入到你的网站中的目标位置',
         scripts: '将以下代码嵌入到你的网站中',
+        chromePlugin: '安装 Dify Chrome 浏览器扩展',
         copied: '已复制',
         copy: '复制',
       },
+      qrcode: {
+        title: '二维码分享',
+        scan: '扫码分享应用',
+        download: '下载二维码',
+      },
       customize: {
         way: '方法',
-        entry: '想要进一步自定义 WebApp？',
+        entry: '定制化',
         title: '定制化 AI WebApp',
         explanation: '你可以定制化 Web App 前端以符合你的情景与风格需求',
         way1: {
@@ -56,11 +77,11 @@ const translation = {
           step1: 'Fork 客户端代码并修改',
           step1Tip: '点击此处 Fork 源码到你的 GitHub 中，然后修改代码',
           step1Operation: 'Dify-WebClient',
-          step2: '配置 Web APP',
-          step2Tip: '复制 Web API 秘钥 和 APP ID 拷贝到客户端代码 config/index.ts 中',
-          step3: '部署到 Vercel 中',
-          step3Tip: '点击此处将仓库导入到 Vercel 中部署',
-          step3Operation: '导入仓库',
+          step2: '部署到 Vercel 中',
+          step2Tip: '点击此处将仓库导入到 Vercel 中部署',
+          step2Operation: '导入仓库',
+          step3: '配置环境变量',
+          step3Tip: '在 Vecel 环境变量中添加以下环境变量',
         },
         way2: {
           name: '编写客户端调用 API 并部署到服务器中',

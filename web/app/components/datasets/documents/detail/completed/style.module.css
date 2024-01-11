@@ -8,7 +8,7 @@
   @apply text-gray-900 font-medium text-base flex-1;
 }
 .docSearchWrapper {
-  @apply sticky w-full h-10 -top-3 bg-white flex items-center mb-3 justify-between z-10;
+  @apply sticky w-full py-1 -top-3 bg-white flex items-center mb-3 justify-between z-10 flex-wrap gap-y-1;
 }
 .listContainer {
   height: calc(100% - 3.25rem);
@@ -18,7 +18,7 @@
   @apply grid gap-4 grid-cols-3 min-w-[902px] last:mb-[30px];
 }
 .segWrapper {
-  @apply box-border h-[180px] min-w-[290px] bg-gray-50 px-4 pt-4 flex flex-col text-opacity-50 rounded-xl border border-transparent hover:border-gray-200 hover:shadow-lg hover:cursor-pointer hover:bg-white;
+  @apply box-border h-[180px] w-full xl:min-w-[290px] bg-gray-50 px-4 pt-4 flex flex-col text-opacity-50 rounded-xl border border-transparent hover:border-gray-200 hover:shadow-lg hover:cursor-pointer hover:bg-white;
 }
 .segTitleWrapper {
   @apply flex items-center justify-between;
@@ -48,7 +48,7 @@
   white-space: pre-line;
 }
 .footer {
-  @apply flex items-center justify-between box-border border-t-gray-200 border-t-[0.5px] pt-3 mt-4;
+  @apply flex items-center justify-between box-border border-t-gray-200 border-t-[0.5px] pt-3 mt-4 flex-wrap gap-y-2;
 }
 .numberInfo {
   @apply text-gray-500 text-xs font-medium;
@@ -131,4 +131,25 @@
 }
 .editTip {
   box-shadow: 0px 4px 6px -2px rgba(16, 24, 40, 0.03), 0px 12px 16px -4px rgba(16, 24, 40, 0.08);
+}
+
+.delModal {
+  background: linear-gradient(
+      180deg,
+      rgba(217, 45, 32, 0.05) 0%,
+      rgba(217, 45, 32, 0) 24.02%
+    ),
+    #f9fafb;
+  box-shadow: 0px 20px 24px -4px rgba(16, 24, 40, 0.08),
+    0px 8px 8px -4px rgba(16, 24, 40, 0.03);
+  @apply rounded-2xl p-8;
+}
+.warningWrapper {
+  box-shadow: 0px 20px 24px -4px rgba(16, 24, 40, 0.08),
+    0px 8px 8px -4px rgba(16, 24, 40, 0.03);
+  background: rgba(255, 255, 255, 0.9);
+  @apply h-12 w-12 border-[0.5px] border-gray-100 rounded-xl mb-3 flex items-center justify-center;
+}
+.warningIcon {
+  @apply w-[22px] h-[22px] fill-current text-red-600;
 }

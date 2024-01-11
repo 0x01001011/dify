@@ -1,6 +1,6 @@
 'use client'
 import type { FC } from 'react'
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { ChevronRightIcon } from '@heroicons/react/20/solid'
 import Link from 'next/link'
 import { Trans, useTranslation } from 'react-i18next'
@@ -18,7 +18,7 @@ export type ISettingsModalProps = {
   isShow: boolean
   defaultValue?: string
   onClose: () => void
-  onSave: (params: ConfigParams) => Promise<any>
+  onSave?: (params: ConfigParams) => Promise<void>
 }
 
 export type ConfigParams = {
@@ -26,6 +26,10 @@ export type ConfigParams = {
   description: string
   default_language: string
   prompt_public: boolean
+  copyright: string
+  privacy_policy: string
+  icon: string
+  icon_background: string
 }
 
 const LANGUAGE_MAP: Record<Language, string> = {
@@ -42,7 +46,8 @@ const SettingsModal: FC<ISettingsModalProps> = ({
   onSave,
 }) => {
   const [isShowMore, setIsShowMore] = useState(false)
-  const { title, description, copyright, privacy_policy, default_language, icon, icon_background } = appInfo.site
+  const { icon, icon_background } = appInfo
+  const { title, description, copyright, privacy_policy, default_language } = appInfo.site
   const [inputInfo, setInputInfo] = useState({ title, desc: description, copyright, privacyPolicy: privacy_policy })
   const [language, setLanguage] = useState(default_language)
   const [saveLoading, setSaveLoading] = useState(false)
@@ -50,6 +55,12 @@ const SettingsModal: FC<ISettingsModalProps> = ({
   // Emoji Picker
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const [emoji, setEmoji] = useState({ icon, icon_background })
+
+  useEffect(() => {
+    setInputInfo({ title, desc: description, copyright, privacyPolicy: privacy_policy })
+    setLanguage(default_language)
+    setEmoji({ icon, icon_background })
+  }, [appInfo])
 
   const onHide = () => {
     onClose()
@@ -70,13 +81,13 @@ const SettingsModal: FC<ISettingsModalProps> = ({
       icon: emoji.icon,
       icon_background: emoji.icon_background,
     }
-    await onSave(params)
+    await onSave?.(params)
     setSaveLoading(false)
     onHide()
   }
 
   const onChange = (field: string) => {
-    return (e: any) => {
+    return (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       setInputInfo(item => ({ ...item, [field]: e.target.value }))
     }
   }
@@ -99,7 +110,9 @@ const SettingsModal: FC<ISettingsModalProps> = ({
           />
           <input className={`flex-grow rounded-lg h-10 box-border px-3 ${s.projectName} bg-gray-100`}
             value={inputInfo.title}
-            onChange={onChange('title')} />
+            onChange={onChange('title')}
+            placeholder={t('app.appNamePlaceholder') || ''}
+          />
         </div>
         <div className={`mt-6 font-medium ${s.settingTitle} text-gray-900 `}>{t(`${prefixSettings}.webDesc`)}</div>
         <p className={`mt-1 ${s.settingsTip} text-gray-500`}>{t(`${prefixSettings}.webDescTip`)}</p>
@@ -137,7 +150,7 @@ const SettingsModal: FC<ISettingsModalProps> = ({
           <p className={`mt-1 ${s.settingsTip} text-gray-500`}>
             <Trans
               i18nKey={`${prefixSettings}.more.privacyPolicyTip`}
-              components={{ privacyPolicyLink: <Link href={'https://langgenius.ai/privacy-policy'} target='_blank' className='text-primary-600' /> }}
+              components={{ privacyPolicyLink: <Link href={'https://docs.dify.ai/user-agreement/privacy-policy'} target='_blank' className='text-primary-600' /> }}
             />
           </p>
           <input className={`w-full mt-2 rounded-lg h-10 box-border px-3 ${s.projectName} bg-gray-100`}
@@ -147,17 +160,16 @@ const SettingsModal: FC<ISettingsModalProps> = ({
           />
         </>}
         <div className='mt-10 flex justify-end'>
-          <Button className='mr-2 flex-shrink-0' onClick={onHide}>{t('common.operation.cancel')}</Button>
-          <Button type='primary' className='flex-shrink-0' onClick={onClickSave} loading={saveLoading}>{t('common.operation.save')}</Button>
+          <Button className='mr-2 flex-shrink-0 !text-sm' onClick={onHide}>{t('common.operation.cancel')}</Button>
+          <Button type='primary' className='flex-shrink-0 !text-sm' onClick={onClickSave} loading={saveLoading}>{t('common.operation.save')}</Button>
         </div>
         {showEmojiPicker && <EmojiPicker
           onSelect={(icon, icon_background) => {
-            console.log(icon, icon_background)
             setEmoji({ icon, icon_background })
             setShowEmojiPicker(false)
           }}
           onClose={() => {
-            setEmoji({ icon: '🤖', icon_background: '#FFEAD5' })
+            setEmoji({ icon: appInfo.site.icon, icon_background: appInfo.site.icon_background })
             setShowEmojiPicker(false)
           }}
         />}

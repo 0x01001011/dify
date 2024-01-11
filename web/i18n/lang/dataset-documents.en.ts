@@ -1,14 +1,14 @@
 const translation = {
   list: {
     title: 'Documents',
-    desc: 'All files of the dataset are shown here, and the entire dataset can be linked to Dify citations or indexed via the Chat plugin.',
+    desc: 'All files of the Knowledge are shown here, and the entire Knowledge can be linked to Dify citations or indexed via the Chat plugin.',
     addFile: 'add file',
     addPages: 'Add Pages',
     table: {
       header: {
         fileName: 'FILE NAME',
         words: 'WORDS',
-        hitCount: 'HIT COUNT',
+        hitCount: 'RETRIEVAL COUNT',
         uploadTime: 'UPLOAD TIME',
         status: 'STATUS',
         action: 'ACTION',
@@ -17,8 +17,11 @@ const translation = {
     action: {
       uploadFile: 'Upload new file',
       settings: 'Segment settings',
-      add: 'Add new segment',
+      addButton: 'Add chunk',
+      add: 'Add a chunk',
+      batchAdd: 'Batch add',
       archive: 'Archive',
+      unarchive: 'Unarchive',
       delete: 'Delete',
       enableWarning: 'Archived file cannot be enabled',
       sync: 'Sync',
@@ -52,6 +55,24 @@ const translation = {
     delete: {
       title: 'Are you sure Delete?',
       content: 'If you need to resume processing later, you will continue from where you left off',
+    },
+    batchModal: {
+      title: 'Batch add chunks',
+      csvUploadTitle: 'Drag and drop your CSV file here, or ',
+      browse: 'browse',
+      tip: 'The CSV file must conform to the following structure:',
+      question: 'question',
+      answer: 'answer',
+      contentTitle: 'chunk content',
+      content: 'content',
+      template: 'Download the template here',
+      cancel: 'Cancel',
+      run: 'Run Batch',
+      runError: 'Run batch failed',
+      processing: 'In batch processing',
+      completed: 'Import completed',
+      error: 'Import Error',
+      ok: 'OK',
     },
   },
   metadata: {
@@ -88,8 +109,8 @@ const translation = {
     field: {
       processRule: {
         processDoc: 'Process Document',
-        segmentRule: 'Segment Rule',
-        segmentLength: 'Segment Length',
+        segmentRule: 'Chunk Rule',
+        segmentLength: 'Chunks Length',
         processClean: 'Text Process Clean',
       },
       book: {
@@ -191,11 +212,11 @@ const translation = {
         source: 'Source',
       },
       technicalParameters: {
-        segmentSpecification: 'Segment specification',
-        segmentLength: 'Segment length',
+        segmentSpecification: 'Chunks specification',
+        segmentLength: 'Chunks length',
         avgParagraphLength: 'Avg. paragraph length',
         paragraphs: 'Paragraphs',
-        hitCount: 'Hit count',
+        hitCount: 'Retrieval count',
         embeddingTime: 'Embedding time',
         embeddedSpend: 'Embedded spend',
       },
@@ -293,7 +314,7 @@ const translation = {
     error: 'Embedding error',
     docName: 'Preprocessing document',
     mode: 'Segmentation rule',
-    segmentLength: 'Segmentation length',
+    segmentLength: 'Chunks length',
     textCleaning: 'Text pre-definition and cleaning',
     segments: 'Paragraphs',
     highQuality: 'High-quality mode',
@@ -308,8 +329,10 @@ const translation = {
   segment: {
     paragraphs: 'Paragraphs',
     keywords: 'Key Words',
+    addKeyWord: 'Add key word',
+    keywordError: 'The maximum length of keyword is 20',
     characters: 'characters',
-    hitCount: 'hit count',
+    hitCount: 'Retrieval count',
     vectorHash: 'Vector hash: ',
     questionPlaceholder: 'add question here',
     questionEmpty: 'Question can not be empty',
@@ -319,6 +342,7 @@ const translation = {
     contentEmpty: 'Content can not be empty',
     newTextSegment: 'New Text Segment',
     newQaSegment: 'New Q&A Segment',
+    delete: 'Delete this chunk ?',
   },
 }
 

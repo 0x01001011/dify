@@ -1,11 +1,10 @@
 # -*- coding:utf-8 -*-
 from flask_restful import fields, marshal_with
+from flask import current_app
 
 from controllers.service_api import api
 from controllers.service_api.wraps import AppApiResource
 
-from core.llm.llm_builder import LLMBuilder
-from models.provider import ProviderName
 from models.model import App
 
 
@@ -22,28 +21,43 @@ class AppParameterApi(AppApiResource):
         'options': fields.List(fields.String)
     }
 
+    system_parameters_fields = {
+        'image_file_size_limit': fields.String
+    }
+
     parameters_fields = {
         'opening_statement': fields.String,
         'suggested_questions': fields.Raw,
         'suggested_questions_after_answer': fields.Raw,
         'speech_to_text': fields.Raw,
+        'retriever_resource': fields.Raw,
+        'annotation_reply': fields.Raw,
         'more_like_this': fields.Raw,
         'user_input_form': fields.Raw,
+        'sensitive_word_avoidance': fields.Raw,
+        'file_upload': fields.Raw,
+        'system_parameters': fields.Nested(system_parameters_fields)
     }
 
     @marshal_with(parameters_fields)
     def get(self, app_model: App, end_user):
         """Retrieve app parameters."""
         app_model_config = app_model.app_model_config
-        provider_name = LLMBuilder.get_default_provider(app_model.tenant_id, 'whisper-1')
 
         return {
             'opening_statement': app_model_config.opening_statement,
             'suggested_questions': app_model_config.suggested_questions_list,
             'suggested_questions_after_answer': app_model_config.suggested_questions_after_answer_dict,
-            'speech_to_text': app_model_config.speech_to_text_dict if provider_name == ProviderName.OPENAI.value else { 'enabled': False },
+            'speech_to_text': app_model_config.speech_to_text_dict,
+            'retriever_resource': app_model_config.retriever_resource_dict,
+            'annotation_reply': app_model_config.annotation_reply_dict,
             'more_like_this': app_model_config.more_like_this_dict,
-            'user_input_form': app_model_config.user_input_form_list
+            'user_input_form': app_model_config.user_input_form_list,
+            'sensitive_word_avoidance': app_model_config.sensitive_word_avoidance_dict,
+            'file_upload': app_model_config.file_upload_dict,
+            'system_parameters': {
+                'image_file_size_limit': current_app.config.get('UPLOAD_IMAGE_FILE_SIZE_LIMIT')
+            }
         }
 
 

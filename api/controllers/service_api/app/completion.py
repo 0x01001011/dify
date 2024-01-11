@@ -13,9 +13,10 @@ from controllers.service_api.app.error import AppUnavailableError, ProviderNotIn
     ConversationCompletedError, CompletionRequestError, ProviderQuotaExceededError, \
     ProviderModelCurrentlyNotSupportError
 from controllers.service_api.wraps import AppApiResource
-from core.conversation_message_task import PubHandler
-from core.llm.error import LLMBadRequestError, LLMAuthorizationError, LLMAPIUnavailableError, LLMAPIConnectionError, \
-    LLMRateLimitError, ProviderTokenNotInitError, QuotaExceededError, ModelCurrentlyNotSupportError
+from core.application_queue_manager import ApplicationQueueManager
+from core.entities.application_entities import InvokeFrom
+from core.errors.error import ProviderTokenNotInitError, QuotaExceededError, ModelCurrentlyNotSupportError
+from core.model_runtime.errors.invoke import InvokeError
 from libs.helper import uuid_value
 from services.completion_service import CompletionService
 
@@ -27,9 +28,12 @@ class CompletionApi(AppApiResource):
 
         parser = reqparse.RequestParser()
         parser.add_argument('inputs', type=dict, required=True, location='json')
-        parser.add_argument('query', type=str, location='json')
+        parser.add_argument('query', type=str, location='json', default='')
+        parser.add_argument('files', type=list, required=False, location='json')
         parser.add_argument('response_mode', type=str, choices=['blocking', 'streaming'], location='json')
-        parser.add_argument('user', type=str, location='json')
+        parser.add_argument('user', required=True, nullable=False, type=str, location='json')
+        parser.add_argument('retriever_from', type=str, required=False, default='dev', location='json')
+
         args = parser.parse_args()
 
         streaming = args['response_mode'] == 'streaming'
@@ -37,13 +41,15 @@ class CompletionApi(AppApiResource):
         if end_user is None and args['user'] is not None:
             end_user = create_or_update_end_user_for_user_id(app_model, args['user'])
 
+        args['auto_generate_name'] = False
+
         try:
             response = CompletionService.completion(
                 app_model=app_model,
                 user=end_user,
                 args=args,
-                from_source='api',
-                streaming=streaming
+                invoke_from=InvokeFrom.SERVICE_API,
+                streaming=streaming,
             )
 
             return compact_response(response)
@@ -60,9 +66,8 @@ class CompletionApi(AppApiResource):
             raise ProviderQuotaExceededError()
         except ModelCurrentlyNotSupportError:
             raise ProviderModelCurrentlyNotSupportError()
-        except (LLMBadRequestError, LLMAPIConnectionError, LLMAPIUnavailableError,
-                LLMRateLimitError, LLMAuthorizationError) as e:
-            raise CompletionRequestError(str(e))
+        except InvokeError as e:
+            raise CompletionRequestError(e.description)
         except ValueError as e:
             raise e
         except Exception as e:
@@ -75,7 +80,7 @@ class CompletionStopApi(AppApiResource):
         if app_model.mode != 'completion':
             raise AppUnavailableError()
 
-        PubHandler.stop(end_user, task_id)
+        ApplicationQueueManager.set_stop_flag(task_id, InvokeFrom.SERVICE_API, end_user.id)
 
         return {'result': 'success'}, 200
 
@@ -88,9 +93,13 @@ class ChatApi(AppApiResource):
         parser = reqparse.RequestParser()
         parser.add_argument('inputs', type=dict, required=True, location='json')
         parser.add_argument('query', type=str, required=True, location='json')
+        parser.add_argument('files', type=list, required=False, location='json')
         parser.add_argument('response_mode', type=str, choices=['blocking', 'streaming'], location='json')
         parser.add_argument('conversation_id', type=uuid_value, location='json')
-        parser.add_argument('user', type=str, location='json')
+        parser.add_argument('user', type=str, required=True, nullable=False, location='json')
+        parser.add_argument('retriever_from', type=str, required=False, default='dev', location='json')
+        parser.add_argument('auto_generate_name', type=bool, required=False, default=True, location='json')
+
         args = parser.parse_args()
 
         streaming = args['response_mode'] == 'streaming'
@@ -103,7 +112,7 @@ class ChatApi(AppApiResource):
                 app_model=app_model,
                 user=end_user,
                 args=args,
-                from_source='api',
+                invoke_from=InvokeFrom.SERVICE_API,
                 streaming=streaming
             )
 
@@ -121,9 +130,8 @@ class ChatApi(AppApiResource):
             raise ProviderQuotaExceededError()
         except ModelCurrentlyNotSupportError:
             raise ProviderModelCurrentlyNotSupportError()
-        except (LLMBadRequestError, LLMAPIConnectionError, LLMAPIUnavailableError,
-                LLMRateLimitError, LLMAuthorizationError) as e:
-            raise CompletionRequestError(str(e))
+        except InvokeError as e:
+            raise CompletionRequestError(e.description)
         except ValueError as e:
             raise e
         except Exception as e:
@@ -136,12 +144,12 @@ class ChatStopApi(AppApiResource):
         if app_model.mode != 'chat':
             raise NotChatAppError()
 
-        PubHandler.stop(end_user, task_id)
+        ApplicationQueueManager.set_stop_flag(task_id, InvokeFrom.SERVICE_API, end_user.id)
 
         return {'result': 'success'}, 200
 
 
-def compact_response(response: Union[dict | Generator]) -> Response:
+def compact_response(response: Union[dict, Generator]) -> Response:
     if isinstance(response, dict):
         return Response(response=json.dumps(response), status=200, mimetype='application/json')
     else:
@@ -162,9 +170,8 @@ def compact_response(response: Union[dict | Generator]) -> Response:
                 yield "data: " + json.dumps(api.handle_error(ProviderQuotaExceededError()).get_json()) + "\n\n"
             except ModelCurrentlyNotSupportError:
                 yield "data: " + json.dumps(api.handle_error(ProviderModelCurrentlyNotSupportError()).get_json()) + "\n\n"
-            except (LLMBadRequestError, LLMAPIConnectionError, LLMAPIUnavailableError,
-                    LLMRateLimitError, LLMAuthorizationError) as e:
-                yield "data: " + json.dumps(api.handle_error(CompletionRequestError(str(e))).get_json()) + "\n\n"
+            except InvokeError as e:
+                yield "data: " + json.dumps(api.handle_error(CompletionRequestError(e.description)).get_json()) + "\n\n"
             except ValueError as e:
                 yield "data: " + json.dumps(api.handle_error(e).get_json()) + "\n\n"
             except Exception:
@@ -179,4 +186,3 @@ api.add_resource(CompletionApi, '/completion-messages')
 api.add_resource(CompletionStopApi, '/completion-messages/<string:task_id>/stop')
 api.add_resource(ChatApi, '/chat-messages')
 api.add_resource(ChatStopApi, '/chat-messages/<string:task_id>/stop')
-

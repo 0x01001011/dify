@@ -7,12 +7,14 @@ import FileUploader from '../file-uploader'
 import NotionPagePreview from '../notion-page-preview'
 import EmptyDatasetCreationModal from '../empty-dataset-creation-modal'
 import s from './index.module.css'
-import type { File } from '@/models/datasets'
-import type { DataSourceNotionPage } from '@/models/common'
+import type { FileItem } from '@/models/datasets'
+import type { NotionPage } from '@/models/common'
 import { DataSourceType } from '@/models/datasets'
 import Button from '@/app/components/base/button'
 import { NotionPageSelector } from '@/app/components/base/notion-page-selector'
 import { useDatasetDetailContext } from '@/context/dataset-detail'
+import { useProviderContext } from '@/context/provider-context'
+import VectorSpaceFull from '@/app/components/billing/vector-space-full'
 
 type IStepOneProps = {
   datasetId?: string
@@ -20,16 +22,14 @@ type IStepOneProps = {
   dataSourceTypeDisable: Boolean
   hasConnection: boolean
   onSetting: () => void
-  files: any[]
-  updateFileList: (files: any[]) => void
-  updateFile: (fileItem: any, progress: number, list: any[]) => void
-  notionPages?: any[]
-  updateNotionPages: (value: any[]) => void
+  files: FileItem[]
+  updateFileList: (files: FileItem[]) => void
+  updateFile: (fileItem: FileItem, progress: number, list: FileItem[]) => void
+  notionPages?: NotionPage[]
+  updateNotionPages: (value: NotionPage[]) => void
   onStepChange: () => void
   changeType: (type: DataSourceType) => void
 }
-
-type Page = DataSourceNotionPage & { workspace_id: string }
 
 type NotionConnectorProps = {
   onSetting: () => void
@@ -64,7 +64,7 @@ const StepOne = ({
   const { dataset } = useDatasetDetailContext()
   const [showModal, setShowModal] = useState(false)
   const [currentFile, setCurrentFile] = useState<File | undefined>()
-  const [currentNotionPage, setCurrentNotionPage] = useState<Page | undefined>()
+  const [currentNotionPage, setCurrentNotionPage] = useState<NotionPage | undefined>()
   const { t } = useTranslation()
 
   const modalShowHandle = () => setShowModal(true)
@@ -77,7 +77,7 @@ const StepOne = ({
     setCurrentFile(undefined)
   }
 
-  const updateCurrentPage = (page: Page) => {
+  const updateCurrentPage = (page: NotionPage) => {
     setCurrentNotionPage(page)
   }
 
@@ -87,11 +87,20 @@ const StepOne = ({
 
   const shouldShowDataSourceTypeList = !datasetId || (datasetId && !dataset?.data_source_type)
 
+  const { plan, enableBilling } = useProviderContext()
+  const allFileLoaded = (files.length > 0 && files.every(file => file.file.id))
+  const hasNotin = notionPages.length > 0
+  const isVectorSpaceFull = plan.usage.vectorSpace >= plan.total.vectorSpace
+  const isShowVectorSpaceFull = (allFileLoaded || hasNotin) && isVectorSpaceFull && enableBilling
+
   const nextDisabled = useMemo(() => {
     if (!files.length)
       return true
     if (files.some(file => !file.file.id))
       return true
+    if (isShowVectorSpaceFull)
+      return true
+
     return false
   }, [files])
   return (
@@ -105,7 +114,7 @@ const StepOne = ({
         <div className={s.form}>
           {
             shouldShowDataSourceTypeList && (
-              <div className={s.dataSourceTypeList}>
+              <div className='flex items-center mb-8 flex-wrap gap-y-4'>
                 <div
                   className={cn(
                     s.dataSourceItem,
@@ -161,6 +170,11 @@ const StepOne = ({
                 onFileUpdate={updateFile}
                 onPreview={updateCurrentFile}
               />
+              {isShowVectorSpaceFull && (
+                <div className='max-w-[640px] mb-4'>
+                  <VectorSpaceFull />
+                </div>
+              )}
               <Button disabled={nextDisabled} className={s.submitButton} type='primary' onClick={onStepChange}>{t('datasetCreation.stepOne.button')}</Button>
             </>
           )}
@@ -170,9 +184,18 @@ const StepOne = ({
               {hasConnection && (
                 <>
                   <div className='mb-8 w-[640px]'>
-                    <NotionPageSelector value={notionPages.map(page => page.page_id)} onSelect={updateNotionPages} onPreview={updateCurrentPage} />
+                    <NotionPageSelector
+                      value={notionPages.map(page => page.page_id)}
+                      onSelect={updateNotionPages}
+                      onPreview={updateCurrentPage}
+                    />
                   </div>
-                  <Button disabled={!notionPages.length} className={s.submitButton} type='primary' onClick={onStepChange}>{t('datasetCreation.stepOne.button')}</Button>
+                  {isShowVectorSpaceFull && (
+                    <div className='max-w-[640px] mb-4'>
+                      <VectorSpaceFull />
+                    </div>
+                  )}
+                  <Button disabled={isShowVectorSpaceFull || !notionPages.length} className={s.submitButton} type='primary' onClick={onStepChange}>{t('datasetCreation.stepOne.button')}</Button>
                 </>
               )}
             </>
