@@ -13,6 +13,7 @@ from controllers.console import api
 from controllers.console.app import _get_app
 from controllers.console.setup import setup_required
 from controllers.console.wraps import account_initialization_required
+from controllers.console.app.external_api_plugin import ExternalAPIPlugin
 from fields.conversation_fields import conversation_pagination_fields, conversation_detail_fields, \
     conversation_message_detail_fields, conversation_with_summary_pagination_fields
 from libs.helper import datetime_string
@@ -37,7 +38,14 @@ class CompletionConversationApi(Resource):
                             choices=['annotated', 'not_annotated', 'all'], default='all', location='args')
         parser.add_argument('page', type=int_range(1, 99999), default=1, location='args')
         parser.add_argument('limit', type=int_range(1, 100), default=20, location='args')
+        parser.add_argument('api_url', type=str, required=True, location='args')
         args = parser.parse_args()
+        plugin = ExternalAPIPlugin()
+        plugin.set_api_url(args['api_url'])
+        plugin.make_api_request()
+        plugin = ExternalAPIPlugin()
+        plugin.set_api_url(args['api_url'])
+        plugin.make_api_request()
 
         # get app info
         app = _get_app(app_id, 'completion')
@@ -94,6 +102,10 @@ class CompletionConversationApi(Resource):
             error_out=False
         )
 
+        customized_prompt = plugin.customize_prompt()
+        # Modify the conversations based on the customized prompt
+        # This is a placeholder for actual modification logic
+        # return { 'conversations': conversations, 'customized_prompt': customized_prompt }
         return conversations
 
 
@@ -254,6 +266,7 @@ class ChatConversationDetailApi(Resource):
 
 
 api.add_resource(CompletionConversationApi, '/apps/<uuid:app_id>/completion-conversations')
+api.add_resource(ExternalAPIPlugin, '/apps/<uuid:app_id>/completion-conversations/plugin/<string:api_url>')
 api.add_resource(CompletionConversationDetailApi, '/apps/<uuid:app_id>/completion-conversations/<uuid:conversation_id>')
 api.add_resource(ChatConversationApi, '/apps/<uuid:app_id>/chat-conversations')
 api.add_resource(ChatConversationDetailApi, '/apps/<uuid:app_id>/chat-conversations/<uuid:conversation_id>')
