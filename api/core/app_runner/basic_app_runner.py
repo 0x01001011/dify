@@ -144,6 +144,9 @@ class BasicApplicationRunner(AppRunner):
                 query=query
             )
 
+            # If external data tool type is 'api', use ExternalAPIRequester to fetch data
+            # This logic should be implemented inside fill_in_inputs_from_external_data_tools
+
         # get context from datasets
         context = None
         if app_orchestration_config.dataset:
@@ -275,6 +278,10 @@ class BasicApplicationRunner(AppRunner):
         :return: the filled inputs
         """
         external_data_fetch_feature = ExternalDataFetchFeature()
+
+        # TODO: Incorporate handling for external API request tools using ExternalAPIRequester class when tool_type is 'api'
+
+        # TODO: Incorporate handling for external API request tools using ExternalAPIRequester class when tool_type is 'api'
         return external_data_fetch_feature.fetch(
             tenant_id=tenant_id,
             app_id=app_id,
