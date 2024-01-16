@@ -9,6 +9,7 @@ from flask import current_app, Flask
 
 from core.entities.application_entities import ExternalDataVariableEntity
 from core.external_data_tool.factory import ExternalDataToolFactory
+from external_api_tools.external_api_requester import ExternalAPIRequester
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +89,22 @@ class ExternalDataFetchFeature:
             )
 
             # query external data tool
-            result = external_data_tool_factory.query(
-                inputs=inputs,
-                query=query
-            )
+            if tool_type == 'api':
+                requester = ExternalAPIRequester(
+                    api_endpoint=tool_config['endpoint'],
+                    headers=tool_config.get('headers', {}),
+                    params=tool_config.get('params', {})
+                )
+                method = tool_config.get('method', 'get').lower()
+                if method == 'post':
+                    requester.data = inputs
+                    result = requester.post()
+                else:
+                    result = requester.get()
+            else:
+                result = external_data_tool_factory.query(
+                    inputs=inputs,
+                    query=query
+                )
 
             return tool_variable, result
