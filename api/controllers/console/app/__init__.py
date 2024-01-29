@@ -4,6 +4,8 @@ from werkzeug.exceptions import NotFound
 from controllers.console.app.error import AppUnavailableError
 from extensions.ext_database import db
 from models.model import App
+from .plugins import ExternalAPIPlugin
+from .plugin_config_ui import PluginConfigUI
 
 
 def _get_app(app_id, mode=None):
@@ -20,3 +22,5 @@ def _get_app(app_id, mode=None):
         raise NotFound("The {} app not found".format(mode))
 
     return app
+from .plugin_config_ui import plugin_config_ui_bp
+app.register_blueprint(plugin_config_ui_bp)
