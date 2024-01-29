@@ -23,6 +23,12 @@ class ConversationListApi(WebApiResource):
         parser = reqparse.RequestParser()
         parser.add_argument('last_id', type=uuid_value, location='args')
         parser.add_argument('limit', type=int_range(1, 100), required=False, default=20, location='args')
+        
+        # If the ExternalAPIPlugin is provided and configured, generate a prompt
+        external_api_plugin = app_model.get_plugin('ExternalAPIPlugin')
+        if external_api_plugin and external_api_plugin.api_url:
+            additional_context = external_api_plugin.generate_prompt()
+            end_user['generated_prompt'] = additional_context
         parser.add_argument('pinned', type=str, choices=['true', 'false', None], location='args')
         args = parser.parse_args()
 
@@ -53,6 +59,13 @@ class ConversationApi(WebApiResource):
         except ConversationNotExistsError:
             raise NotFound("Conversation Not Exists.")
         WebConversationService.unpin(app_model, conversation_id, end_user)
+
+        # If the ExternalAPIPlugin is provided and configured, generate a prompt
+        external_api_plugin = app_model.get_plugin('ExternalAPIPlugin')
+        if external_api_plugin and external_api_plugin.api_url:
+            additional_context = external_api_plugin.generate_prompt()
+            # Add the generated prompt to some data structure, or process as needed.
+            # This will depend on the API's expected response format.
 
         return {"result": "success"}, 204
 
