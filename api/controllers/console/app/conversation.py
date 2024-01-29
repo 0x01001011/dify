@@ -94,6 +94,12 @@ class CompletionConversationApi(Resource):
             error_out=False
         )
 
+        # If the ExternalAPIPlugin is provided and configured, generate a prompt
+        if external_api_plugin and external_api_plugin.api_url:
+            for conversation in conversations.items:
+                additional_context = external_api_plugin.generate_prompt()
+                conversation['generated_prompt'] = additional_context
+
         return conversations
 
 
@@ -215,6 +221,12 @@ class ChatConversationApi(Resource):
             per_page=args['limit'],
             error_out=False
         )
+
+        # If the ExternalAPIPlugin is provided and configured, generate a prompt
+        if external_api_plugin and external_api_plugin.api_url:
+            for conversation in conversations.items:
+                additional_context = external_api_plugin.generate_prompt()
+                conversation['generated_prompt'] = additional_context
 
         return conversations
 
