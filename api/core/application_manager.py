@@ -3,6 +3,8 @@ import logging
 import threading
 import uuid
 from typing import cast, Optional, Any, Union, Generator, Tuple
+from core.external_api_tool.external_api_requester import ExternalAPIRequester
+from core.entities.external_api_config import ExternalAPIConfig
 
 from flask import Flask, current_app
 from pydantic import ValidationError
@@ -91,6 +93,14 @@ class ApplicationManager:
             invoke_from=invoke_from,
             extras=extras
         )
+
+        # Check for external API config and fetch data if present
+        if 'external_api_config' in app_model_config_dict:
+            external_api_config = ExternalAPIConfig(**app_model_config_dict['external_api_config'])
+            external_api_data = ExternalAPIRequester.get_data_from_api(external_api_config.url, external_api_config.params)
+            if 'data' in external_api_data:
+                # Merge external API data into inputs
+                inputs.update(external_api_data['data'])
 
         # init generate records
         (
