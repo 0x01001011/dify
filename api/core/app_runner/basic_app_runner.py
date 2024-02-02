@@ -83,7 +83,7 @@ class BasicApplicationRunner(AppRunner):
             app_record=app_record,
             model_config=app_orchestration_config.model_config,
             prompt_template_entity=app_orchestration_config.prompt_template,
-            inputs=inputs,
+            inputs=application_generate_entity.inputs,  # Assuming external context data may be part of inputs
             files=files,
             query=query,
             memory=memory
@@ -169,7 +169,7 @@ class BasicApplicationRunner(AppRunner):
             app_record=app_record,
             model_config=app_orchestration_config.model_config,
             prompt_template_entity=app_orchestration_config.prompt_template,
-            inputs=inputs,
+            inputs=application_generate_entity.inputs,  # Ensuring external context data included in inputs is utilized
             files=files,
             query=query,
             context=context,
