@@ -10,6 +10,7 @@ from core.features.annotation_reply import AnnotationReplyFeature
 from core.features.dataset_retrieval import DatasetRetrievalFeature
 from core.features.external_data_fetch import ExternalDataFetchFeature
 from core.features.hosting_moderation import HostingModerationFeature
+from core.features.external_api_request import ExternalAPIRequestFeature
 from core.features.moderation import ModerationFeature
 from core.memory.token_buffer_memory import TokenBufferMemory
 from core.model_manager import ModelInstance
@@ -302,6 +303,15 @@ class BasicApplicationRunner(AppRunner):
         :param queue_manager: queue manager
         :param model_config: model config
         :param dataset_config: dataset config
+        # Fetch context from external APIs
+        external_api_request_feature = ExternalAPIRequestFeature()
+        try:
+            external_api_context = external_api_request_feature.fetch_context(tenant_id=tenant_id, app_id=app_id, inputs=inputs)
+            # Integrate the fetched context into the inputs dictionary
+            inputs.update(external_api_context)
+        except Exception as e:
+            logger.error(f"Failed to fetch context from external APIs: {e}")
+            
         :param show_retrieve_source: show retrieve source
         :param message: message
         :param inputs: inputs
