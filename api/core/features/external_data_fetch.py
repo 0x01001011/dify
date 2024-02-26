@@ -37,6 +37,10 @@ class ExternalDataFetchFeature:
 
         results = {}
         with ThreadPoolExecutor() as executor:
+from core.features.external_api_request import ExternalAPIRequestFeature
+
+    def __init__(self):
+        self.external_api_request_feature = ExternalAPIRequestFeature()
             futures = {}
             for tool in external_data_tools:
                 future = executor.submit(
@@ -55,7 +59,18 @@ class ExternalDataFetchFeature:
                 tool_variable, result = future.result()
                 results[tool_variable] = result
 
-        inputs.update(results)
+        # Fetch additional context from external APIs
+        external_api_context = self.external_api_request_feature.make_request({
+            "endpoint": "https://example.com/api/context",  # This should be replaced with the actual endpoint
+            "params": {"tenant_id": tenant_id, "app_id": app_id},  # These params are placeholders
+            "method": "GET"
+        })
+        external_api_data = self.external_api_request_feature.parse_response(external_api_context)
+        
+        # Combine external data tools results with external API data
+        combined_results = {**results, **external_api_data}
+        inputs.update(combined_results)
+        
         return inputs
 
     def _query_external_data_tool(self, flask_app: Flask,
