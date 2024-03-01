@@ -27,3 +27,5 @@ from .explore import installed_app, recommended_app, completion, conversation, m
 from .universal_chat import chat, conversation, message, parameter, audio
 
 from .billing import billing
+from api.controllers.service_api.plugins.external_api_plugin import ExternalAPIPlugin
+# ExternalAPIPlugin is available for extending conversation functionalities
