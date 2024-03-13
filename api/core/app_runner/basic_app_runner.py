@@ -30,6 +30,7 @@ class BasicApplicationRunner(AppRunner):
     def run(self, application_generate_entity: ApplicationGenerateEntity,
             queue_manager: ApplicationQueueManager,
             conversation: Conversation,
+from api.external_data_tool.api.external_api_tool import ExternalApiTool
             message: Message) -> None:
         """
         Run application
@@ -274,14 +275,12 @@ class BasicApplicationRunner(AppRunner):
         :param query: the query
         :return: the filled inputs
         """
-        external_data_fetch_feature = ExternalDataFetchFeature()
-        return external_data_fetch_feature.fetch(
-            tenant_id=tenant_id,
-            app_id=app_id,
-            external_data_tools=external_data_tools,
-            inputs=inputs,
-            query=query
-        )
+        external_api_tool = ExternalApiTool()
+        for external_data_tool in external_data_tools:
+            fetched_data = external_api_tool.fetch_data(external_data_tool['config']['url'], external_data_tool['config']['params'])
+            if 'data' in fetched_data and not fetched_data['error']:
+                inputs[external_data_tool['variable']] = fetched_data['data']
+        return inputs
 
     def retrieve_dataset_context(self, tenant_id: str,
                                  app_record: App,
