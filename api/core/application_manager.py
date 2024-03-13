@@ -27,10 +27,9 @@ from core.application_queue_manager import ApplicationQueueManager, Conversation
 from extensions.ext_database import db
 from models.account import Account
 from models.model import EndUser, Conversation, Message, MessageFile, App
+from api.external_data_tool.api.external_api_tool import ExternalApiTool
 
 logger = logging.getLogger(__name__)
-
-
 class ApplicationManager:
     """
     This class is responsible for managing application
@@ -352,19 +351,21 @@ class ApplicationManager:
             )
 
         # external data variables
-        properties['external_data_variables'] = []
         external_data_tools = copy_app_model_config_dict.get('external_data_tools', [])
+        external_api_tool = ExternalApiTool()
+        fetched_external_data = []
         for external_data_tool in external_data_tools:
             if 'enabled' not in external_data_tool or not external_data_tool['enabled']:
                 continue
-
-            properties['external_data_variables'].append(
+            fetched_data = external_api_tool.fetch_data(external_data_tool['config']['url'], external_data_tool['config']['params'])
+            fetched_external_data.append(
                 ExternalDataVariableEntity(
                     variable=external_data_tool['variable'],
                     type=external_data_tool['type'],
-                    config=external_data_tool['config']
+                    data=fetched_data
                 )
             )
+        properties['external_data_variables'] = fetched_external_data
 
         # show retrieve source
         show_retrieve_source = False
@@ -387,7 +388,6 @@ class ApplicationManager:
 
                     if key != 'dataset':
                         continue
-
                     tool_item = tool[key]
 
                     if "enabled" not in tool_item or not tool_item["enabled"]:
