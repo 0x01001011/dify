@@ -2,13 +2,17 @@ from typing import Optional
 
 from core.extension.extensible import ExtensionModule
 from extensions.ext_code_based_extension import code_based_extension
+from api.core.external_data_tool.api.external_api_tool import ExternalAPITool
 
 
 class ExternalDataToolFactory:
 
     def __init__(self, name: str, tenant_id: str, app_id: str, variable: str, config: dict) -> None:
-        extension_class = code_based_extension.extension_class(ExtensionModule.EXTERNAL_DATA_TOOL, name)
-        self.__extension_instance = extension_class(
+        if name == 'external_api':
+            self.__extension_instance = ExternalAPITool(tenant_id=tenant_id, app_id=app_id, variable=variable, config=config)
+        else:
+            extension_class = code_based_extension.extension_class(ExtensionModule.EXTERNAL_DATA_TOOL, name)
+            self.__extension_instance = extension_class(
             tenant_id=tenant_id,
             app_id=app_id,
             variable=variable,
