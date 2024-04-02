@@ -42,6 +42,14 @@ const translation = {
     model: 'Model',
     plugins: {
       name: 'Plugins',
+      external_api: {
+        name: 'External API',
+        description: 'Configure and retrieve data from an external API',
+        fields: {
+          api_url: 'API URL',
+          params: 'Parameters (JSON format)'
+        }
+      },
       google_search: {
         name: 'Google Search',
         more: {
