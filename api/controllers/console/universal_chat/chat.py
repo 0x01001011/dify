@@ -18,6 +18,7 @@ from core.errors.error import ProviderTokenNotInitError, QuotaExceededError, Mod
 from core.model_runtime.errors.invoke import InvokeError
 from libs.helper import uuid_value
 from services.completion_service import CompletionService
+from api.core.external_data_tool.api.external_api_plugin import ExternalAPIPlugin
 
 
 class UniversalChatApi(UniversalChatResource):
@@ -33,6 +34,13 @@ class UniversalChatApi(UniversalChatResource):
         parser.add_argument('tools', type=list, required=True, location='json')
         parser.add_argument('retriever_from', type=str, required=False, default='universal_app', location='json')
         args = parser.parse_args()
+
+        # Check if ExternalAPIPlugin is configured for the current conversation
+        external_api_plugin = ExternalAPIPlugin()
+        if external_api_plugin.is_configured():
+            api_response = external_api_plugin.make_request()
+            processed_data = external_api_plugin.customize_prompt_with_langchain_and_openai(api_response)
+            args['inputs']['external_api_data'] = processed_data
 
         app_model_config = app_model.app_model_config
 
