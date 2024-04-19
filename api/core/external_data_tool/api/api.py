@@ -35,6 +35,24 @@ class ApiExternalDataTool(ExternalDataTool):
             APIBasedExtension.id == api_based_extension_id
         ).first()
 
+    def retrieve_external_data(self, api_endpoint: str, headers: Optional[dict] = None) -> dict:
+        """
+        Retrieve data from the configured API URL.
+
+        :param api_endpoint: The API endpoint to make the request to.
+        :param headers: Optional headers for the request.
+        :return: The response data as a dictionary.
+        """
+        # Implementation of API request logic using requests library
+        import requests
+        try:
+            response = requests.get(api_endpoint, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise ValueError(f'Failed to retrieve data from {api_endpoint}: {e}')
+        
+
         if not api_based_extension:
             raise ValueError("api_based_extension_id is invalid")
 
@@ -46,6 +64,16 @@ class ApiExternalDataTool(ExternalDataTool):
         :param query: the query of chat app
         :return: the tool query result
         """
+        # Retrieve data using the new method
+        api_endpoint = self.config.get('api_endpoint')
+        headers = self.config.get('headers', None)
+        response_data = self.retrieve_external_data(api_endpoint, headers)
+
+        # Process the response data to customize the prompt
+        # This is a placeholder for processing logic, potentially integrating with LangChain and OpenAI
+        customized_prompt = 'Customized prompt based on response data: ' + str(response_data)
+
+        # Original code for reference
         # get params from config
         api_based_extension_id = self.config.get("api_based_extension_id")
 
